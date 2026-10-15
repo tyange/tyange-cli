@@ -6,3 +6,6 @@
 # already existing elements were commented out
 
 #/target
+
+# tools/ 안의 Bun 스크립트 의존성
+/tools/**/node_modules

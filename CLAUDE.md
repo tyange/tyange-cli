@@ -71,6 +71,13 @@ src/
 `auth login`은 **서버가 받아 주는 키일 때만** 저장하고(틀린 키로 기존 설정을 덮어쓰지 않는다), 기본으로 저장돼 있던 ID/비밀번호를 지운다(`--keep-password`로 남김).
 env 파일은 항상 `0600`. **키는 채팅에 쓰게 하지 말고 `tyange auth login`을 사용자가 직접 실행하게 한다.**
 
+## 도구 (`tools/`)
+
+- **`tools/extract-ink/extract-ink.ts`** — 손글씨 사진에서 글씨만 남기고 배경은 투명하게 만든다(종이 질감·그림자·바인더가 사라진다). Bun + `sharp`.
+  `cd tools/extract-ink && bun install && bun extract-ink.ts <사진> <결과.png> [x,y,w,h]` (`x,y,w,h`는 글씨 영역 자르기).
+  종이 밝기를 흐림으로 추정해 "종이보다 얼마나 어두운가"를 투명도로 바꾸고 색은 잉크색으로 통일한다. 결과 PNG를 Craft `CMS` 폴더 문서에 넣으면 cms-api가 lovelog 글로 올린다
+  (cms-api의 Craft 동기화는 사진 보정을 하지 않는다). lovelog의 종이 카드(밝은 바탕)에서는 투명 PNG가 잘 보이지만 어두운 바탕에서는 글씨가 안 보인다.
+
 ## 규칙
 
 - HTTP는 `reqwest::blocking`(+`rustls`, OpenSSL 불필요). GUIDE.md의 tokio 전환은 아직 안 했다 — `--watch`가 단순 폴링 루프라 필요가 없었다.
