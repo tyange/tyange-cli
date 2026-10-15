@@ -2,7 +2,7 @@ use std::io::Read;
 
 use serde_json::Value;
 
-use crate::cli::CmsCommand;
+use crate::cli::{CmsCommand, ImageCommand};
 use crate::cms::{parse_tag, today_kst, Cms, Post, PostBody, PostItem, Tag};
 use crate::config::Config;
 use crate::error::AppError;
@@ -34,6 +34,13 @@ pub fn label(item: &PostItem) -> String {
     }
 }
 
+/// 제목이나 본문 앞부분에 `query`가 있는가(대소문자 무시).
+pub fn matches_search(item: &PostItem, query: &str) -> bool {
+    let needle = query.to_lowercase();
+    item.title.to_lowercase().contains(&needle)
+        || item.excerpt.as_deref().unwrap_or("").to_lowercase().contains(&needle)
+}
+
 pub fn post_line(item: &PostItem) -> String {
     let tags = item
         .tags
@@ -49,6 +56,14 @@ pub fn post_line(item: &PostItem) -> String {
         tags,
         label(item)
     )
+}
+
+/// CMS 에디터처럼 lovelog 짧은 글이 한도를 넘으면 published로는 저장하지 않는다(draft는 된다).
+fn ensure_short_form_ok(body: &PostBody) -> Result<(), AppError> {
+    match crate::shortform::violation(&body.tags, &body.published_at, &body.content, &body.status) {
+        Some(message) => Err(AppError::Invalid(message)),
+        None => Ok(()),
+    }
 }
 
 fn read_content(file: &str) -> Result<String, AppError> {
@@ -118,14 +133,20 @@ pub fn print_sync_report(report: &Value) {
 }
 
 pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppError> {
+    // 키 관리는 키로 연결하면 안 된다(ID/비밀번호 로그인이 필요해서 따로 처리한다).
+    if let CmsCommand::Keys { command } = command {
+        return crate::commands::keys::run(config, command, json);
+    }
     let cms = Cms::connect(config)?;
     match command {
-        CmsCommand::Posts { status, tag, limit } => {
+        CmsCommand::Posts { status, tag, category, search, limit } => {
             let posts: Vec<PostItem> = cms
                 .list_posts()?
                 .into_iter()
                 .filter(|p| status.as_deref().is_none_or(|s| p.status == s))
                 .filter(|p| tag.as_deref().is_none_or(|t| p.tags.iter().any(|x| x.tag == t)))
+                .filter(|p| category.as_deref().is_none_or(|c| p.tags.iter().any(|x| x.category == c)))
+                .filter(|p| search.as_deref().is_none_or(|q| matches_search(p, q)))
                 .take(limit)
                 .collect();
             if json {
@@ -158,6 +179,7 @@ pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppEr
                 content,
                 status,
             };
+            ensure_short_form_ok(&body)?;
             let id = cms.create_post(&body)?;
             if json {
                 return print_json(&serde_json::json!({ "post_id": id, "status": body.status }));
@@ -176,7 +198,10 @@ pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppEr
             }
             let mut body = PostBody::from(cms.get_post(&id)?);
             if let Some(file) = file {
-                body.content = std::fs::read_to_string(file)?;
+                body.content = read_content(&file)?;
+                if body.content.trim().is_empty() {
+                    return Err(AppError::Invalid("본문이 비어 있습니다".into()));
+                }
             }
             if let Some(title) = title {
                 body.title = title;
@@ -193,6 +218,7 @@ pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppEr
             if let Some(date) = date {
                 body.published_at = date;
             }
+            ensure_short_form_ok(&body)?;
             let post = cms.update_post(&id, &body)?;
             if json {
                 return print_json(&post);
@@ -238,6 +264,15 @@ pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppEr
                 None => println!("아직 실행 기록이 없습니다."),
             }
         }
+        CmsCommand::Tags => crate::commands::media::tags(&cms, json)?,
+        CmsCommand::Image { command } => match command {
+            ImageCommand::Upload { file, post_id, kind } => {
+                crate::commands::media::upload(&cms, &file, post_id.as_deref(), &kind, json)?
+            }
+        },
+        CmsCommand::Portfolio { command } => crate::commands::portfolio::run(&cms, command)?,
+        CmsCommand::Guests => crate::commands::guests::run(&cms, json)?,
+        CmsCommand::Keys { .. } => unreachable!("Keys는 위에서 먼저 처리한다"),
     }
     Ok(())
 }
@@ -245,6 +280,7 @@ pub fn run(command: CmsCommand, json: bool, config: &Config) -> Result<(), AppEr
 fn set_status(cms: &Cms, id: &str, status: &str, json: bool) -> Result<(), AppError> {
     let mut body = PostBody::from(cms.get_post(id)?);
     body.status = status.to_string();
+    ensure_short_form_ok(&body)?;
     let post = cms.update_post(id, &body)?;
     if json {
         return print_json(&post);
@@ -275,6 +311,29 @@ mod tests {
         assert_eq!(label(&item("", Some("첫 줄\n\n둘째   줄"))), "첫 줄 둘째 줄");
         assert_eq!(label(&item("", None)), "(제목 없음)");
         assert_eq!(label(&item("제목", Some("본문"))), "제목");
+    }
+
+    #[test]
+    fn search_looks_at_the_title_and_the_excerpt_ignoring_case() {
+        assert!(matches_search(&item("Rust 노트", None), "rust"));
+        assert!(matches_search(&item("", Some("오늘은 Nuxt을 만졌다")), "NUXT"));
+        assert!(!matches_search(&item("제목", Some("본문")), "없는말"));
+    }
+
+    #[test]
+    fn publishing_a_long_lovelog_post_is_refused_but_a_draft_is_fine() {
+        let long = "가".repeat(201);
+        let body = |status: &str| PostBody {
+            title: String::new(),
+            description: String::new(),
+            published_at: "2026-10-15".into(),
+            tags: vec![Tag { tag: "lovelog".into(), category: "general".into() }],
+            content: long.clone(),
+            status: status.into(),
+        };
+        let error = ensure_short_form_ok(&body("published")).unwrap_err().to_string();
+        assert!(error.contains("200자") && error.contains("201자"), "{error}");
+        assert!(ensure_short_form_ok(&body("draft")).is_ok());
     }
 
     #[test]

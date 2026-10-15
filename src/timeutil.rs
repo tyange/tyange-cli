@@ -39,6 +39,34 @@ pub fn parse_rfc3339(text: &str) -> Option<i64> {
     Some(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second - offset)
 }
 
+/// 1970-01-01로부터의 일수 → (년, 월, 일). Howard Hinnant의 civil_from_days.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+/// 유닉스 초를 한국 시각 `10/15 14:03`으로.
+pub fn seoul_short(secs: i64) -> String {
+    let local = secs + 9 * 3600;
+    let (_, month, day) = civil_from_days(local.div_euclid(86_400));
+    let in_day = local.rem_euclid(86_400);
+    format!("{month}/{day} {:02}:{:02}", in_day / 3600, (in_day % 3600) / 60)
+}
+
+/// SQLite `CURRENT_TIMESTAMP`(UTC, `2026-10-15 05:28:29`)를 한국 시각 `10/15 14:28`으로. 못 읽으면 원문 그대로.
+pub fn sqlite_utc_to_seoul(text: &str) -> String {
+    parse_rfc3339(&format!("{}Z", text.trim().replace(' ', "T")))
+        .map(seoul_short)
+        .unwrap_or_else(|| text.to_string())
+}
+
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -78,6 +106,14 @@ mod tests {
         for bad in ["", "yesterday", "2026-13-01T00:00:00Z", "2026-10-15", "2026-10-15T05:28Z", "2026-10-15T05:28:29"] {
             assert_eq!(parse_rfc3339(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn utc_becomes_seoul_time() {
+        assert_eq!(seoul_short(1_792_042_109), "10/15 14:28");
+        assert_eq!(sqlite_utc_to_seoul("2026-10-15 05:28:29"), "10/15 14:28");
+        assert_eq!(sqlite_utc_to_seoul("2026-10-15 15:00:00"), "10/16 00:00", "자정을 넘으면 날짜가 넘어간다");
+        assert_eq!(sqlite_utc_to_seoul("???"), "???");
     }
 
     #[test]

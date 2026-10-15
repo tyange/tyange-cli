@@ -5,6 +5,8 @@ mod config;
 mod error;
 mod forgejo;
 mod git;
+mod prompt;
+mod shortform;
 mod timeutil;
 
 use clap::Parser;

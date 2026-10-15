@@ -9,20 +9,33 @@ tyange 개인 인프라(Forgejo, tyange-cms-api)를 다루는 Rust CLI. cargo �
 로그인·인증 헤더·응답 봉투 같은 세부 사항을 CLI가 안에서 처리한다. 결과를 읽을 때는 항상 `--json`을 붙인다.
 
 ```bash
-tyange cms posts [--status draft|published] [--tag lovelog] [--limit 20] [--json]
+# 글
+tyange cms posts [--status draft|published] [--tag lovelog] [--category dev] [--search 글자] [--limit 20] [--json]
 tyange cms get <id>
-tyange cms new --file <md|-> [--tag lovelog] [--title ..] [--status draft|published] [--date YYYY-MM-DD]
-tyange cms update <id> [--file md] [--title ..] [--tag ..] [--status ..] [--date ..]
+tyange cms new --file <md|-> [--tag lovelog|category/name]… [--title ..] [--status draft|published] [--date YYYY-MM-DD]
+tyange cms update <id> [--file md|-] [--title ..] [--tag ..]… [--status ..] [--date ..]
 tyange cms publish <id>       # published로
 tyange cms draft <id>         # draft로 (삭제 대신 이걸 먼저 쓴다)
 tyange cms delete <id> --yes  # 되돌릴 수 없다. --yes 없이는 거부한다
+tyange cms tags               # 카테고리별 태그 목록
+tyange cms image upload <파일> [--post-id <글 id>] [--type in_post|portfolio_icon]   # 주소와 ![](…)를 알려 준다
+# 포트폴리오 (섹션: meta, identity, intro, featured_projects, career, portfolio_pdf)
+tyange cms portfolio get                         # content만 JSON으로 → 고쳐서 put에 그대로 넣는다
+tyange cms portfolio put <파일.json>             # 전체 저장(최초 생성용)
+tyange cms portfolio delete --yes
+tyange cms portfolio section get <섹션>          # PDF 포트폴리오 데이터는 portfolio_pdf 섹션
+tyange cms portfolio section set <섹션> <파일.json>
+# 운영
+tyange cms guests             # lovelog 청첩장 하객 명단 + 시간대별 인원
 tyange cms sync               # Craft 폴더를 지금 바로 동기화 (POST /admin/craft/sync)
 tyange cms sync-status        # 동기화가 켜져 있는지, 마지막 결과
-tyange ci [--watch] [--timeout 120]   # 현재 리포의 Forgejo Actions
-tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 가능한 모든 저장소에서 지금 돌고 있는 CI (--recent는 저장소마다 마지막 실행)
+tyange cms keys list|create --name .. [--role admin|user] [--save]|revoke <id>   # ID/비밀번호 로그인 필요
+# 로그인·배포
 tyange auth login [--keep-password]   # API 키를 확인한 뒤 저장 (입력은 화면에 안 보임, 파이프도 가능)
 tyange auth status                    # 어떤 방식으로 로그인하는지 + 서버가 받아 주는지
 tyange auth logout                    # 저장된 키 삭제 (서버의 키는 CMS /api-keys에서 폐기)
+tyange ci [--watch] [--timeout 120]   # 현재 리포의 Forgejo Actions
+tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 가능한 모든 저장소에서 지금 돌고 있는 CI (--recent는 저장소마다 마지막 실행)
 ```
 
 - **`tyange ci --watch`는 푸시 직후 배포를 기다릴 때 쓴다.** 현재 HEAD 커밋의 실행만 지켜보고, 성공이면 0·실패/취소면 1로 끝난다.
@@ -54,8 +67,12 @@ src/
   git.rs          remote URL 파싱, origin/HEAD 조회
   forgejo.rs      Actions 실행 목록 (RunStatus는 모르는 값을 Unknown으로 받는다)
   cms.rs          cms-api 클라이언트 (login, posts, get, create, update, delete, craft sync)
-  commands/ci.rs  ci, ci --watch (pick_run: HEAD 커밋의 실행만 고른다)
-  commands/cms.rs cms 서브커맨드 + 출력 형식
+  commands/ci.rs  ci, ci --watch, ci --all
+  commands/cms.rs cms 서브커맨드 분배 + 글 관련(목록·생성·수정·삭제·동기화) + 출력 형식
+  commands/{media,portfolio,guests,keys,auth}.rs   태그·이미지 / 포트폴리오 / 하객 / API 키 / 로그인
+  shortform.rs    lovelog 200자 규칙 (CMS·lovelog·cms-api와 같은 값, 함께 고친다)
+  prompt.rs       한 줄 입력·숨김 입력(stty -echo)
+  timeutil.rs     RFC3339 파싱, 한국 시각, 경과 시간
 ```
 
 ## cms-api와 맞물리는 지점 (바뀌면 여기도 고친다)
@@ -65,6 +82,23 @@ src/
   (글 자체에 `status` 필드가 있어서 `data`까지 같이 있을 때만 봉투로 본다.)
 - 태그는 `{tag, category}`. CLI는 `lovelog`(→ general) 또는 `category/name`으로 받는다.
 - 이미지 주소는 서버가 `https://tyange.com/api/cms/images/…`로 돌려준다.
+
+## CMS(tyange-cms) 기능 ↔ CLI 대응
+
+| CMS 기능 | CLI | 비고 |
+|---|---|---|
+| 포스트 목록·조회·등록·수정·삭제, 상태 전환 | `cms posts/get/new/update/publish/draft/delete` | 에디터(마크다운/리치 텍스트) 대신 파일·표준입력. **lovelog 짧은 글 200자 규칙을 CMS와 똑같이 적용**(초과하면 published 저장 거부, draft는 허용) — `src/shortform.rs` |
+| 태그·카테고리 조회와 필터 | `cms tags`, `cms posts --tag/--category/--search` | |
+| 이미지 업로드(본문·포트폴리오 아이콘) | `cms image upload` | CMS는 브라우저에서 올리기 전에 압축하지만 CLI는 **압축하지 않는다**(서버 상한 10MB를 먼저 검사) |
+| 포트폴리오 편집(소개·경력·프로젝트 등 섹션별 저장) | `cms portfolio get/put/delete`, `section get/set` | 섹션별 입력 폼 대신 **JSON 파일**. 서버가 섹션별 스키마로 검증한다 |
+| PDF 포트폴리오 편집 | `cms portfolio section get/set portfolio_pdf` | **PDF 파일 생성은 못 한다** — 브라우저 인쇄(`/portfolio-pdf/print`)라서 |
+| 하객 명단·시간대별 인원 | `cms guests` | `VISIT_HOURS`는 lovelog·cms-api·CMS 화면과 같은 값(함께 고친다) |
+| API 키 발급·폐기 | `cms keys …` | **키로는 키를 관리할 수 없다**(서버가 막음) → ID/비밀번호로 로그인한다. 설정에 없으면 터미널에서 묻는다(저장 안 함) |
+| Craft 동기화 | `cms sync`, `cms sync-status` | |
+| 로그인 | `auth login/status/logout` | |
+
+CMS에 있지만 CLI에 **없는** 것: 에디터 UI와 자동 저장(해당 없음), 이미지 클라이언트 압축, PDF 파일 생성, 포트폴리오 폼 UI.
+cms-api에는 있지만 CMS 화면이 안 쓰는 `/me`·`/me/profile`·`/admin/add-user`(계정 관리)도 CLI에 없다.
 
 ## 로그인 방식 (키 우선)
 
@@ -99,5 +133,9 @@ env 파일은 항상 `0600`. **키는 채팅에 쓰게 하지 말고 `tyange aut
 
 ## 검증 상태
 
-- `cargo test` 43개 통과. `cms`·`auth`·`ci`·`ci --all` 모두 실제 서버에 호출해 확인했다.
-- **`ci --all`에서 "돌고 있는 CI가 있을 때"의 줄은 실제 서버로는 못 봤다**(확인 시점에 도는 CI가 없었다). 그 경로는 실제 응답의 필드로 만든 합성 데이터 테스트로만 확인했다.
+- `cargo test` 65개 통과.
+- **읽기 명령은 운영 서버에 실제로 호출해 확인**했다(`tags`, `posts` 필터, `portfolio get`/`section get`, `guests`, `ci`, `ci --all`, `auth status`).
+- **쓰기 명령(`portfolio put/section set/delete`, `image upload`, `keys create/revoke`, 글 규칙)은 운영이 아니라 임시 DB로 띄운 로컬 cms-api로** 끝까지 확인했다
+  (운영 포트폴리오나 키를 시험 삼아 건드리지 않으려고). 이때 `portfolio delete`가 **빈 본문 200 응답을 JSON 오류로 오해**하던 버그를 찾아 고쳤다(`send_ok`/`status_error`, 테스트로 고정).
+- **터미널 입력 경로는 자동 테스트하지 못했다**: `auth login`·`keys`의 숨김 입력(`stty -echo`)과 ID/비밀번호 묻기는 TTY가 있어야 해서 파이프로만 확인했다.
+- `ci --all`에서 "돌고 있는 CI가 있을 때"의 줄은 실제 서버로는 못 봤다(확인 시점에 도는 CI가 없었다).

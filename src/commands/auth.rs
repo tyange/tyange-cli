@@ -1,29 +1,10 @@
-use std::io::{BufRead, IsTerminal, Write};
-use std::process::Command;
-
 use crate::cli::AuthCommand;
 use crate::cms::{key_prefix, Cms, API_KEY_PREFIX};
 use crate::config::{update_env_file, Config};
 use crate::error::AppError;
 
-/// 키를 한 줄 읽는다. 터미널이면 입력이 화면에 보이지 않게 하고(`stty -echo`), 파이프면 그냥 읽는다.
 fn read_key() -> Result<String, AppError> {
-    let interactive = std::io::stdin().is_terminal();
-    if interactive {
-        eprint!("API 키(입력은 보이지 않습니다): ");
-        std::io::stderr().flush()?;
-        let _ = Command::new("stty").arg("-echo").status();
-    }
-
-    let mut line = String::new();
-    let read = std::io::stdin().lock().read_line(&mut line);
-
-    if interactive {
-        let _ = Command::new("stty").arg("echo").status();
-        eprintln!();
-    }
-    read?;
-    Ok(line.trim().to_string())
+    crate::prompt::read_secret("API 키(입력은 보이지 않습니다): ")
 }
 
 /// 이 키로 서버가 받아 주는지 가볍게 확인한다(관리자 전용 상태 조회).

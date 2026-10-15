@@ -69,6 +69,12 @@ pub enum CmsCommand {
         /// 이 태그가 붙은 글만(이름 기준).
         #[arg(long)]
         tag: Option<String>,
+        /// 이 카테고리의 태그가 붙은 글만(예: general, dev).
+        #[arg(long)]
+        category: Option<String>,
+        /// 제목이나 본문 앞부분(300자)에 이 글자가 있는 글만(대소문자 무시).
+        #[arg(long)]
+        search: Option<String>,
         /// 최대 개수.
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -96,8 +102,9 @@ pub enum CmsCommand {
     /// 글을 고친다. 준 항목만 바뀐다. `--tag`를 주면 태그 전체를 교체한다.
     Update {
         id: String,
+        /// 새 본문 파일. `-`면 표준 입력.
         #[arg(long)]
-        file: Option<PathBuf>,
+        file: Option<String>,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -123,6 +130,85 @@ pub enum CmsCommand {
     Sync,
     /// Craft 동기화가 켜져 있는지와 마지막 결과.
     SyncStatus,
+    /// 카테고리별 태그 목록.
+    Tags,
+    /// 이미지를 올린다(글 본문·포트폴리오 아이콘).
+    Image {
+        #[command(subcommand)]
+        command: ImageCommand,
+    },
+    /// 포트폴리오(소개·경력·프로젝트·PDF 포트폴리오)를 읽고 고친다.
+    Portfolio {
+        #[command(subcommand)]
+        command: PortfolioCommand,
+    },
+    /// lovelog 청첩장 하객 명단과 시간대별 인원.
+    Guests,
+    /// API 키를 만들고 폐기한다. **ID/비밀번호 로그인이 필요하다**(API 키로는 안 된다).
+    Keys {
+        #[command(subcommand)]
+        command: KeysCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ImageCommand {
+    /// 이미지 파일(png·jpg·gif·webp, 10MB 이하)을 올리고 주소를 알려 준다.
+    Upload {
+        file: PathBuf,
+        /// 이 글에 연결한다(글 id).
+        #[arg(long)]
+        post_id: Option<String>,
+        /// 종류: 글 본문(in_post) 또는 포트폴리오 아이콘(portfolio_icon).
+        #[arg(long = "type", default_value = "in_post", value_parser = ["in_post", "portfolio_icon"])]
+        kind: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PortfolioCommand {
+    /// 포트폴리오 문서(`content`)를 JSON으로 출력한다. 고쳐서 `put`에 그대로 넣을 수 있다.
+    Get,
+    /// JSON 파일로 포트폴리오 전체를 저장한다(최초 생성용. 평소에는 `section set`).
+    Put { file: PathBuf },
+    /// 포트폴리오 전체를 지운다. 되돌릴 수 없어서 `--yes`가 있어야 한다.
+    Delete {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// 섹션 하나를 읽고 쓴다.
+    Section {
+        #[command(subcommand)]
+        command: SectionCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SectionCommand {
+    /// 섹션의 `content`를 JSON으로 출력한다. 키: meta, identity, intro, featured_projects, career, portfolio_pdf.
+    Get { key: String },
+    /// JSON 파일로 섹션을 저장한다. 서버가 섹션별 스키마로 검증한다.
+    Set { key: String, file: PathBuf },
+}
+
+#[derive(Subcommand)]
+pub enum KeysCommand {
+    /// 내 API 키 목록(폐기한 것 포함). 원문은 나오지 않는다.
+    List,
+    /// 새 키를 만든다. 원문은 **이번 한 번만** 보여 준다.
+    Create {
+        /// 알아볼 이름(예: "tyange CLI (맥북)").
+        #[arg(long)]
+        name: String,
+        /// admin은 관리 API까지, user는 글·이미지 쓰기만.
+        #[arg(long, default_value = "admin", value_parser = ["admin", "user"])]
+        role: String,
+        /// 만든 키를 이 기기의 설정(~/.config/tyange-cli/env)에 바로 저장한다.
+        #[arg(long)]
+        save: bool,
+    },
+    /// 키를 폐기한다(즉시 인증이 안 된다).
+    Revoke { id: i64 },
 }
 
 #[cfg(test)]
@@ -141,6 +227,29 @@ mod tests {
         assert!(Cli::try_parse_from(["tyange", "ci", "--all", "--recent", "--json"]).is_ok());
         assert!(Cli::try_parse_from(["tyange", "ci", "--recent"]).is_err(), "--recent는 --all이 있어야 한다");
         assert!(Cli::try_parse_from(["tyange", "ci", "--all", "--watch"]).is_err(), "둘은 함께 쓸 수 없다");
+    }
+
+    #[test]
+    fn every_cms_feature_has_a_command() {
+        for args in [
+            vec!["tyange", "cms", "posts", "--category", "dev", "--search", "rust"],
+            vec!["tyange", "cms", "tags"],
+            vec!["tyange", "cms", "image", "upload", "a.png", "--type", "portfolio_icon", "--post-id", "p1"],
+            vec!["tyange", "cms", "portfolio", "get"],
+            vec!["tyange", "cms", "portfolio", "put", "p.json"],
+            vec!["tyange", "cms", "portfolio", "delete", "--yes"],
+            vec!["tyange", "cms", "portfolio", "section", "get", "meta"],
+            vec!["tyange", "cms", "portfolio", "section", "set", "career", "c.json"],
+            vec!["tyange", "cms", "guests"],
+            vec!["tyange", "cms", "keys", "list"],
+            vec!["tyange", "cms", "keys", "create", "--name", "x", "--role", "user", "--save"],
+            vec!["tyange", "cms", "keys", "revoke", "4"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["tyange", "cms", "image", "upload", "a.png", "--type", "gif"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "cms", "keys", "create"]).is_err(), "--name은 필수");
+        assert!(Cli::try_parse_from(["tyange", "cms", "keys", "revoke", "abc"]).is_err());
     }
 
     #[test]

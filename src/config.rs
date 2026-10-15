@@ -130,6 +130,11 @@ impl Config {
         self.get(key).ok_or(AppError::MissingConfig(key))
     }
 
+    /// 설정에 ID와 비밀번호가 둘 다 있으면 돌려준다.
+    pub fn cms_credentials(&self) -> Option<(&str, &str)> {
+        Some((self.get("TYANGE_CMS_ID")?, self.get("TYANGE_CMS_PASSWORD")?))
+    }
+
     /// 있으면 비밀번호 로그인 대신 이 키를 쓴다.
     pub fn cms_api_key(&self) -> Option<&str> {
         self.get("TYANGE_CMS_API_KEY")
