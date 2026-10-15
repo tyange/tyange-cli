@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::error::AppError;
 
 pub const DEFAULT_CMS_API_BASE: &str = "https://tyange.com/api/cms";
+pub const DEFAULT_FORGEJO_HOST: &str = "git.tyange.com";
 
 /// 설정은 환경변수가 우선이고, 없으면 `~/.config/tyange-cli/env`(`KEY=VALUE` 줄)에서 읽는다.
 /// 토큰·비밀번호는 어디에도 출력하지 않는다(`Debug`도 값을 가린다).
@@ -95,6 +96,7 @@ impl Config {
             .unwrap_or_default();
         for key in [
             "TYANGE_FORGEJO_TOKEN",
+            "TYANGE_FORGEJO_HOST",
             "TYANGE_CMS_API_BASE",
             "TYANGE_CMS_API_KEY",
             "TYANGE_CMS_ID",
@@ -131,6 +133,11 @@ impl Config {
     /// 있으면 비밀번호 로그인 대신 이 키를 쓴다.
     pub fn cms_api_key(&self) -> Option<&str> {
         self.get("TYANGE_CMS_API_KEY")
+    }
+
+    /// `ci --all`이 목록을 가져올 Forgejo 주소(호스트만). 저장소 폴더 안의 `ci`는 origin에서 알아낸다.
+    pub fn forgejo_host(&self) -> &str {
+        self.get("TYANGE_FORGEJO_HOST").unwrap_or(DEFAULT_FORGEJO_HOST)
     }
 
     pub fn forgejo_token(&self) -> Result<&str, AppError> {

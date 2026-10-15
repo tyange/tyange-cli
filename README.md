@@ -14,6 +14,7 @@ git.tyange.com(Forgejo), tyange-cms-api, 24개 개인 리포처럼 내 인프라
 
 ```bash
 tyange ci [--watch]            # 현재 리포의 Forgejo Actions 상태. --watch는 HEAD 커밋의 실행이 끝날 때까지
+tyange ci --all [--recent]     # 모든 저장소에서 지금 돌고 있는 CI (--recent: 저장소마다 마지막 실행)
 tyange cms posts|get|new|update|publish|draft|delete   # tyange-cms-api 글 관리
 tyange cms sync | sync-status  # Craft 폴더 동기화 즉시 실행 / 상태
 ```

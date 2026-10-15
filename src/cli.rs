@@ -26,6 +26,12 @@ pub enum Commands {
         /// --watch가 기다릴 최대 시간(분).
         #[arg(long, default_value_t = 120)]
         timeout: u64,
+        /// 저장소 폴더 밖에서도: 접근할 수 있는 모든 저장소에서 지금 돌고 있는 CI를 모아 본다.
+        #[arg(long, conflicts_with = "watch")]
+        all: bool,
+        /// --all과 함께: 돌고 있는 것 대신 저장소마다 마지막 실행을 본다.
+        #[arg(long, requires = "all")]
+        recent: bool,
     },
     /// tyange-cms-api(블로그·lovelog 글)를 다룬다.
     Cms {
@@ -127,6 +133,14 @@ mod tests {
     #[test]
     fn the_command_tree_is_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn ci_all_flags_are_wired_correctly() {
+        assert!(Cli::try_parse_from(["tyange", "ci", "--all"]).is_ok());
+        assert!(Cli::try_parse_from(["tyange", "ci", "--all", "--recent", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["tyange", "ci", "--recent"]).is_err(), "--recent는 --all이 있어야 한다");
+        assert!(Cli::try_parse_from(["tyange", "ci", "--all", "--watch"]).is_err(), "둘은 함께 쓸 수 없다");
     }
 
     #[test]

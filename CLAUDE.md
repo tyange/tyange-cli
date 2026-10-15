@@ -19,6 +19,7 @@ tyange cms delete <id> --yes  # 되돌릴 수 없다. --yes 없이는 거부한�
 tyange cms sync               # Craft 폴더를 지금 바로 동기화 (POST /admin/craft/sync)
 tyange cms sync-status        # 동기화가 켜져 있는지, 마지막 결과
 tyange ci [--watch] [--timeout 120]   # 현재 리포의 Forgejo Actions
+tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 가능한 모든 저장소에서 지금 돌고 있는 CI (--recent는 저장소마다 마지막 실행)
 tyange auth login [--keep-password]   # API 키를 확인한 뒤 저장 (입력은 화면에 안 보임, 파이프도 가능)
 tyange auth status                    # 어떤 방식으로 로그인하는지 + 서버가 받아 주는지
 tyange auth logout                    # 저장된 키 삭제 (서버의 키는 CMS /api-keys에서 폐기)
@@ -40,6 +41,7 @@ tyange auth logout                    # 저장된 키 삭제 (서버의 키는 C
 | `TYANGE_CMS_ID`, `TYANGE_CMS_PASSWORD` | 키가 없을 때의 ID/비밀번호 로그인(예전 방식) | 없음 |
 | `TYANGE_CMS_API_BASE` | cms-api 주소 | `https://tyange.com/api/cms` |
 | `TYANGE_FORGEJO_TOKEN` | `ci`용 Forgejo 토큰(저장소 읽기 권한) | 없음(필수) |
+| `TYANGE_FORGEJO_HOST` | `ci --all`이 목록을 가져올 Forgejo 호스트 | `git.tyange.com` |
 
 ## 구조
 
@@ -85,9 +87,17 @@ env 파일은 항상 `0600`. **키는 채팅에 쓰게 하지 말고 `tyange aut
 - 사람이 읽는 출력과 `--json` 출력을 둘 다 지원한다. 출력에 비밀값을 섞지 않는다.
 - 삭제처럼 되돌릴 수 없는 동작은 명시적 플래그(`--yes`)를 요구한다.
 
+## Forgejo API에서 확인한 것 (2026-10-15, 실제 응답)
+
+- 실행 목록 `GET /api/v1/repos/{owner}/{repo}/actions/runs?limit=N` → `{ total_count, workflow_runs: [...] }`. 실행에는 `status`, `title`, `prettyref`(브랜치),
+  `commit_sha`, `started`/`stopped`/`created`/`updated`(RFC3339, `Z`), `duration`(나노초), `html_url`, `repository.full_name`이 있다.
+  **`event`와 `trigger_event`가 둘 다 온다 — `event`에 `alias = "trigger_event"`를 걸면 "duplicate field" 에러가 난다**(처음 구현에서 실제로 났고, 실제 응답을 줄인 테스트로 고정했다).
+- `?status=running` 필터는 저장소 단위로 동작한다. 그러나 **조직·관리자·사용자 단위 실행 목록 API는 없다**(`/orgs/{org}/actions/runs` 등 전부 404) — 그래서 `ci --all`은
+  `GET /repos/search`로 저장소를 모은 뒤(`has_actions && !archived`, 페이지 50씩) **저장소마다 최근 10개를 병렬(6개 스레드)로** 받아 CLI에서 거른다.
+  "돌고 있음"은 `waiting | running | blocked`(`RunStatus::is_in_progress`).
+- 인증은 `Authorization: token <토큰>`(Bearer 아님).
+
 ## 검증 상태
 
-- `cargo test` 32개 통과. `auth`(키 발급→login→사용→폐기→거부→logout)는 **로컬 cms-api를 임시 DB로 띄워** 끝까지 확인했다(운영 서버에는 아직 키 기능이 배포되기 전). `cms` 명령은 운영 서버에 실제로 호출해 확인했다(목록·조회·생성·수정·발행/draft·삭제·동기화).
-- **`ci`는 실제 Forgejo에 대고 확인하지 못했다.** 토큰이 없어서다. 실행 목록의 `commit_sha`(없으면 `head_sha`) 필드 이름과 응답 모양은
-  GUIDE.md의 기록과 Forgejo 문서에 기댄 가정이다 — 처음 돌릴 때 `tyange ci --json`으로 필드를 확인할 것. 커밋 해시 필드가 없으면
-  `pick_run`이 가장 최근 실행으로 떨어진다(푸시 직후엔 옛 실행을 볼 수 있다).
+- `cargo test` 43개 통과. `cms`·`auth`·`ci`·`ci --all` 모두 실제 서버에 호출해 확인했다.
+- **`ci --all`에서 "돌고 있는 CI가 있을 때"의 줄은 실제 서버로는 못 봤다**(확인 시점에 도는 CI가 없었다). 그 경로는 실제 응답의 필드로 만든 합성 데이터 테스트로만 확인했다.
