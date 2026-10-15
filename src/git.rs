@@ -16,7 +16,48 @@ pub struct RemoteInfo {
 }
 
 pub fn parse_remote_url(url: &str) -> Option<RemoteInfo> {
-    todo!()
+    let (host, path) = if let Some(rest) = url.strip_prefix("git@") {
+        rest.split_once(':')?
+    } else {
+        url.strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))?
+            .split_once('/')?
+    };
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    if host.is_empty() || owner.is_empty() || repo.is_empty() || repo.contains('/') {
+        return None;
+    }
+    Some(RemoteInfo {
+        host: host.to_string(),
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+    })
+}
+
+/// 현재 디렉터리 리포의 `origin` URL.
+pub fn origin_url() -> Result<String, crate::error::AppError> {
+    let output = std::process::Command::new("git")
+        .args(["config", "--get", "remote.origin.url"])
+        .output()?;
+    if !output.status.success() {
+        return Err(crate::error::AppError::NotAGitRepo);
+    }
+    let url = String::from_utf8(output.stdout)
+        .map_err(|e| crate::error::AppError::Invalid(e.to_string()))?;
+    Ok(url.trim().to_string())
+}
+
+/// 현재 HEAD 커밋 해시. 리포가 아니면 `None`.
+pub fn head_sha() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(test)]

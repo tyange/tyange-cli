@@ -13,18 +13,23 @@ git.tyange.com(Forgejo), tyange-cms-api, 24개 개인 리포처럼 내 인프라
 ## 지금 있는 것
 
 ```bash
-tyange ci [--watch]   # 현재 리포의 Forgejo Actions 최근 실행 상태
+tyange ci [--watch]            # 현재 리포의 Forgejo Actions 상태. --watch는 HEAD 커밋의 실행이 끝날 때까지
+tyange cms posts|get|new|update|publish|draft|delete   # tyange-cms-api 글 관리
+tyange cms sync | sync-status  # Craft 폴더 동기화 즉시 실행 / 상태
 ```
+
+모든 명령은 `--json`을 받는다. 설정(`TYANGE_CMS_ID`, `TYANGE_CMS_PASSWORD`, `TYANGE_FORGEJO_TOKEN`)은
+환경변수나 `~/.config/tyange-cli/env`에 둔다. 자세한 건 `CLAUDE.md`.
 
 ## 로드맵
 
 | 단계 | 서브커맨드 | 상태 |
 |---|---|---|
 | 0 | CLI 스켈레톤 | ✅ |
-| 1 | `tyange ci` | 🚧 |
-| 2 | `tyange ci --watch` | 예정 |
+| 1 | `tyange ci` | ✅ (Forgejo 실호출은 토큰 필요) |
+| 2 | `tyange ci --watch` | ✅ (blocking 폴링) |
 | 3 | `tyange repos` — 여러 리포 dirty/unpushed 상태판 | 예정 |
-| 4 | `tyange publish <file>` — 마크다운 → CMS 발행 | 예정 |
+| 4 | `tyange cms new/update/publish` — 마크다운 → CMS 발행 | ✅ (프론트매터 대신 플래그) |
 | 5 | `tyange new <name> --template <t>` — 새 리포 스캐폴딩 | 선택 |
 
 자세한 단계별 가이드는 `GUIDE.md`.
