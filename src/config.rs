@@ -5,6 +5,8 @@ use crate::error::AppError;
 
 pub const DEFAULT_CMS_API_BASE: &str = "https://tyange.com/api/cms";
 pub const DEFAULT_FORGEJO_HOST: &str = "git.tyange.com";
+/// tytower 서버 기본 주소(`TYTOWER_PORT`의 기본값과 같다).
+pub const DEFAULT_TOWER_URL: &str = "http://127.0.0.1:47820";
 
 /// 설정은 환경변수가 우선이고, 없으면 `~/.config/tyange-cli/env`(`KEY=VALUE` 줄)에서 읽는다.
 /// 토큰·비밀번호는 어디에도 출력하지 않는다(`Debug`도 값을 가린다).
@@ -49,17 +51,20 @@ pub fn apply_env_updates(text: &str, updates: &[(&str, Option<&str>)]) -> String
     out
 }
 
-/// env 파일을 갱신한다. 없으면 만들고, 항상 소유자만 읽고 쓰게(0600) 둔다.
+/// env 파일을 갱신한다. 없으면 만들고, 유닉스에서는 소유자만 읽고 쓰게(0600) 둔다.
+/// Windows에는 모드 비트가 없어서 파일 권한은 사용자 폴더의 ACL에 맡긴다.
 pub fn update_env_file(updates: &[(&str, Option<&str>)]) -> Result<PathBuf, AppError> {
-    use std::os::unix::fs::PermissionsExt;
-
     let path = config_file_path().ok_or(AppError::MissingConfig("HOME"))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     std::fs::write(&path, apply_env_updates(&existing, updates))?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
     Ok(path)
 }
 
@@ -101,6 +106,9 @@ impl Config {
             "TYANGE_CMS_API_KEY",
             "TYANGE_CMS_ID",
             "TYANGE_CMS_PASSWORD",
+            "TYANGE_TOWER_URL",
+            "TYANGE_TOWER_TOKEN",
+            "TYTOWER_CONFIG_DIR",
         ] {
             if let Ok(value) = std::env::var(key) {
                 values.insert(key.to_string(), value);
@@ -153,6 +161,23 @@ impl Config {
         self.get("TYANGE_CMS_API_BASE")
             .unwrap_or(DEFAULT_CMS_API_BASE)
             .trim_end_matches('/')
+    }
+
+    /// tytower 서버 주소. 기본은 이 PC의 기본 포트다.
+    pub fn tower_url(&self) -> &str {
+        self.get("TYANGE_TOWER_URL")
+            .unwrap_or(DEFAULT_TOWER_URL)
+            .trim_end_matches('/')
+    }
+
+    /// 설정된 tytower 토큰. 없으면 `None`이고, 이 PC의 토큰 파일은 `tower.rs`가 찾는다.
+    pub fn tower_token(&self) -> Option<&str> {
+        self.get("TYANGE_TOWER_TOKEN")
+    }
+
+    /// tytower의 설정 폴더(`TYTOWER_CONFIG_DIR`). 토큰 파일이 여기 있다고 가정한다(tytower와 같은 변수).
+    pub fn tower_config_dir(&self) -> Option<&str> {
+        self.get("TYTOWER_CONFIG_DIR")
     }
 }
 
@@ -208,6 +233,24 @@ mod tests {
         assert_eq!(apply_env_updates("A=1\nA=2\n", &[("A", Some("3"))]), "A=3\n");
         assert_eq!(apply_env_updates("", &[("A", Some("1"))]), "A=1\n");
         assert_eq!(apply_env_updates("A=1\n", &[("B", None)]), "A=1\n");
+    }
+
+    #[test]
+    fn tower_settings_default_and_never_leak_the_token() {
+        let empty = Config::default();
+        assert_eq!(empty.tower_url(), DEFAULT_TOWER_URL);
+        assert!(empty.tower_token().is_none());
+        assert!(empty.tower_config_dir().is_none());
+
+        let config = Config::from_pairs(&[
+            ("TYANGE_TOWER_URL", "http://127.0.0.1:47890/"),
+            ("TYANGE_TOWER_TOKEN", "tower-secret-value"),
+            ("TYTOWER_CONFIG_DIR", "  "),
+        ]);
+        assert_eq!(config.tower_url(), "http://127.0.0.1:47890", "the trailing slash is trimmed");
+        assert_eq!(config.tower_token(), Some("tower-secret-value"));
+        assert!(config.tower_config_dir().is_none(), "a blank directory counts as unset");
+        assert!(!format!("{config:?}").contains("tower-secret-value"));
     }
 
     #[test]

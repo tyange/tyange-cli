@@ -1,6 +1,7 @@
 # tyange-cli (`tyange`)
 
-tyange 개인 인프라(Forgejo, tyange-cms-api)를 다루는 Rust CLI. cargo 사용. 바이너리 이름은 `tyange`.
+tyange 개인 인프라(Forgejo, tyange-cms-api)와 데스크톱 컨트롤 타워(tytower)를 다루는 Rust CLI. cargo 사용. 바이너리 이름은 `tyange`.
+기능 대응표(tytower의 어떤 화면·API가 어떤 명령인지)는 `docs/tower-parity.md`.
 `cargo install --path . --locked`로 `~/.cargo/bin/tyange`에 설치한다 — **코드를 고치면 다시 설치해야 반영된다.**
 
 ## Claude가 이걸 쓰는 방식 (중요)
@@ -36,12 +37,36 @@ tyange auth status                    # 어떤 방식으로 로그인하는지 +
 tyange auth logout                    # 저장된 키 삭제 (서버의 키는 CMS /api-keys에서 폐기)
 tyange ci [--watch] [--timeout 120]   # 현재 리포의 Forgejo Actions
 tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 가능한 모든 저장소에서 지금 돌고 있는 CI (--recent는 저장소마다 마지막 실행)
+# tytower (실행 중이어야 한다. 아래 "tytower" 절)
+tyange tower status                   # 연결과 토큰 확인
+tyange tower overview [--refresh] [--source work|geeknews|hn|trending|tyange|repos|personal]
+tyange tower brain list | show <id|제목|폴더/제목> | search <검색어> [--limit n] | file <파일 id> -o <경로> | sync
+tyange tower netfile status | search <검색어> [--in 단어|--not 단어] [--type video|image|doc] [--period 1w|1m|6m|1y] [--size ..] [--scope all|folder|file]
+tyange tower netfile ls <폴더 id> | download <항목 id>... | jobs | cancel <작업 id> | rm <작업 id> --yes
 ```
 
 - **`tyange ci --watch`는 푸시 직후 배포를 기다릴 때 쓴다.** 현재 HEAD 커밋의 실행만 지켜보고, 성공이면 0·실패/취소면 1로 끝난다.
   오래 걸리니(cms-api는 수십 분) 백그라운드로 돌리고 알림을 받는다. HEAD의 실행이 3분 안에 안 나타나면 에러로 끝난다.
 - 글을 **발행(`publish`, `new --status published`)하거나 지우는 건 사용자 확인을 받고** 한다. 시험할 때는 draft로 만들고 `delete --yes`로 치운다.
 - `cms update`는 서버가 PUT으로 전체 필드를 요구해서 **먼저 글을 읽어 온 뒤 바꿀 항목만 덮어 보낸다**(CLI가 한다).
+
+## tytower (`tyange tower`)
+
+tytower는 이 PC에서 도는 로컬 HTTP 서버다(`127.0.0.1:47820`, `TYTOWER_PORT`). **Overview·Brain·NetFile 명령은 그 HTTP API를 부를 뿐 로직을 다시 만들지 않는다.**
+CMS 명령은 예외로 cms-api를 직접 부른다(위 CMS 절). 구현은 `src/tower.rs`(클라이언트) + `src/commands/tower.rs`(상태·개요) + `brain.rs` + `netfile.rs`.
+
+- 토큰은 `Authorization: Bearer <토큰>`으로만 나간다. **토큰은 어떤 출력·에러 문구·`Debug`에도 없다.** 상태 출력도 "설정" 또는 "토큰 파일 경로"만 보여 준다.
+- 토큰 찾는 순서: `TYANGE_TOWER_TOKEN`(환경 변수, 그다음 env 파일) → **localhost일 때만** 토큰 파일. 원격 주소에서는 토큰 파일을 읽지 않는다.
+  토큰 파일 위치: `TYTOWER_CONFIG_DIR`가 있으면 그 폴더의 `tower-token`, 없으면 Windows `%APPDATA%\com.tyange.tytower\tower-token`(macOS `~/Library/Application Support/…`, Linux `$XDG_CONFIG_HOME` 또는 `~/.config/…`).
+  그래서 이 PC에서는 설정 없이 동작한다.
+- tytower가 꺼져 있으면 `tytower가 실행 중이 아닙니다 … TYTOWER_HEADLESS=1 tytower` 안내로 끝난다(exit 1).
+- `overview --refresh`와 `brain sync`는 시작하고 **끝날 때까지 기다린다**(`wait_for`, 제한 시간 180초·300초). 이미 돌고 있으면(409) 기다리기만 한다.
+- `brain show <이름>`은 제목·경로(확장자 없이도)로 찾는다. 여러 개가 맞으면 목록을 보여 주고 id로 고르게 한다.
+- `brain file`은 이미 있는 파일을 **덮어쓰지 않는다**.
+- `netfile rm <작업 id>`는 목록에서 작업을 찾고 상태가 `done`인지 확인한 뒤, **파일 이름과 크기를 보여 주고 `--yes`가 있어야** 지운다. 없으면 DELETE를 보내지 않는다. 서버도 다운로드 폴더 안의 일반 파일만 지운다.
+- `netfile` 검색 필터 이름은 `nf search`와 같다(`--in`/`--not`, `--type`, `--period`, `--size`, `--scope`). 검색 본문은 tytower 웹 화면이 보내는 모양과 같다(빠진 필터는 뺀다).
+- NetFile 로그인 값은 CLI가 다루지 않는다. `netfile status`는 "있다/없다"와 출처만 보여 준다.
+- 테스트 환경에서는 `TYTOWER_NETFILE_DIR`를 임시 폴더로 바꿔서 실제 Downloads 폴더를 만들지 않게 한다.
 
 ## 설정
 
@@ -55,6 +80,9 @@ tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 �
 | `TYANGE_CMS_API_BASE` | cms-api 주소 | `https://tyange.com/api/cms` |
 | `TYANGE_FORGEJO_TOKEN` | `ci`용 Forgejo 토큰(저장소 읽기 권한) | 없음(필수) |
 | `TYANGE_FORGEJO_HOST` | `ci --all`이 목록을 가져올 Forgejo 호스트 | `git.tyange.com` |
+| `TYANGE_TOWER_URL` | tytower 주소 | `http://127.0.0.1:47820` |
+| `TYANGE_TOWER_TOKEN` | tytower 토큰. 없으면 이 PC의 토큰 파일을 읽는다(localhost일 때만) | 없음 |
+| `TYTOWER_CONFIG_DIR` | tytower의 설정 폴더(토큰 파일이 여기 있다). tytower와 같은 변수 | 앱 설정 폴더 |
 
 ## 구조
 
@@ -63,13 +91,16 @@ src/
   main.rs         Config 로드 → 서브커맨드 디스패치. 에러는 stderr에 `error: …`, 종료 코드 1
   cli.rs          clap 정의(--json은 global)
   config.rs       환경변수 + env 파일, 값 가림
-  error.rs        AppError (Network는 reqwest::Error::without_url()로 URL을 뺀다)
+  error.rs        AppError (Network는 reqwest::Error::without_url()로 URL을 뺀다, TowerNotRunning은 주소의 원점만)
   git.rs          remote URL 파싱, origin/HEAD 조회
   forgejo.rs      Actions 실행 목록 (RunStatus는 모르는 값을 Unknown으로 받는다)
   cms.rs          cms-api 클라이언트 (login, posts, get, create, update, delete, craft sync)
+  tower.rs        tytower HTTP 클라이언트(토큰 찾기, Bearer, 에러 모양). 응답은 Value로 들고 다닌다
   commands/ci.rs  ci, ci --watch, ci --all
   commands/cms.rs cms 서브커맨드 분배 + 글 관련(목록·생성·수정·삭제·동기화) + 출력 형식
   commands/{media,portfolio,guests,keys,auth}.rs   태그·이미지 / 포트폴리오 / 하객 / API 키 / 로그인
+  commands/tower.rs  tower 분배, status, overview(--refresh, --source), 기다리기(wait_for), 공용 출력 도우미
+  commands/{brain,netfile}.rs  tower brain / tower netfile (노트 고르기, 파일 쓰기, rm 규칙, 검색 본문)
   shortform.rs    lovelog 200자 규칙 (CMS·lovelog·cms-api와 같은 값, 함께 고친다)
   prompt.rs       한 줄 입력·숨김 입력(stty -echo)
   timeutil.rs     RFC3339 파싱, 한국 시각, 경과 시간
@@ -117,9 +148,11 @@ env 파일은 항상 `0600`. **키는 채팅에 쓰게 하지 말고 `tyange aut
 ## 규칙
 
 - HTTP는 `reqwest::blocking`(+`rustls`, OpenSSL 불필요). GUIDE.md의 tokio 전환은 아직 안 했다 — `--watch`가 단순 폴링 루프라 필요가 없었다.
-- 새 서브커맨드는 `cli.rs`에 정의 → `commands/`에 구현 → **순수 함수(파싱·선택·형식)는 테스트**한다. 네트워크 호출 자체는 테스트하지 않는다.
+- 새 서브커맨드는 `cli.rs`에 정의 → `commands/`에 구현 → **순수 함수(파싱·선택·형식)는 테스트**한다.
+- 네트워크를 거치는 명령은 `tests/tower_cli.rs`처럼 **흉내 낸 서버(std `TcpListener`, `tests/support/mod.rs`)에 실제 바이너리를 붙여서** 테스트한다(외부 크레이트 없이). 요청 헤더·본문·경로도 검사한다.
 - 사람이 읽는 출력과 `--json` 출력을 둘 다 지원한다. 출력에 비밀값을 섞지 않는다.
 - 삭제처럼 되돌릴 수 없는 동작은 명시적 플래그(`--yes`)를 요구한다.
+- Windows 빌드: `config.rs`의 0600 권한 설정은 `cfg(unix)`에서만 한다(Windows에는 모드 비트가 없다). 그 밖에 OS별 코드를 넣을 때도 같은 식으로 가린다.
 
 ## Forgejo API에서 확인한 것 (2026-10-15, 실제 응답)
 
@@ -133,7 +166,10 @@ env 파일은 항상 `0600`. **키는 채팅에 쓰게 하지 말고 `tyange aut
 
 ## 검증 상태
 
-- `cargo test` 65개 통과.
+- `cargo test` (Windows, Rust 1.95): 단위 테스트 기존 65개 + 새로 추가한 것, 통합 테스트 25개(`tests/tower_cli.rs`). 전부 통과.
+  M5 이전 기록은 65개 통과다.
+- 실제 tytower 헤드리스(포트 47890, 임시 설정·브레인 폴더)에 대해 `tower status`, `overview`, `brain list/show/search`, `netfile status`를 실행해 확인했다(운영 cms-api·실제 NetFile 로그인 값은 쓰지 않았다).
+- `tower netfile rm`·`download`·`cancel`은 흉내 낸 서버로만 확인했다(실제 NetFile에 요청하지 않는다).
 - **읽기 명령은 운영 서버에 실제로 호출해 확인**했다(`tags`, `posts` 필터, `portfolio get`/`section get`, `guests`, `ci`, `ci --all`, `auth status`).
 - **쓰기 명령(`portfolio put/section set/delete`, `image upload`, `keys create/revoke`, 글 규칙)은 운영이 아니라 임시 DB로 띄운 로컬 cms-api로** 끝까지 확인했다
   (운영 포트폴리오나 키를 시험 삼아 건드리지 않으려고). 이때 `portfolio delete`가 **빈 본문 200 응답을 JSON 오류로 오해**하던 버그를 찾아 고쳤다(`send_ok`/`status_error`, 테스트로 고정).

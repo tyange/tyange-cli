@@ -8,6 +8,7 @@ mod git;
 mod prompt;
 mod shortform;
 mod timeutil;
+mod tower;
 
 use clap::Parser;
 use cli::{Cli, Commands};
@@ -21,6 +22,7 @@ fn main() {
         Commands::Ci { watch, timeout, .. } => commands::ci::run(watch, timeout, cli.json, &config),
         Commands::Cms { command } => commands::cms::run(command, cli.json, &config),
         Commands::Auth { command } => commands::auth::run(command, cli.json, &config),
+        Commands::Tower { command } => commands::tower::run(command, cli.json, &config),
     };
 
     if let Err(e) = result {

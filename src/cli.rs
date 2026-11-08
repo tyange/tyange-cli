@@ -43,6 +43,105 @@ pub enum Commands {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    /// 데스크톱 컨트롤 타워(tytower)의 개요·브레인·NetFile을 다룬다. tytower가 실행 중이어야 한다.
+    Tower {
+        #[command(subcommand)]
+        command: TowerCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TowerCommand {
+    /// tytower가 떠 있는지, 토큰이 맞는지 확인한다.
+    Status,
+    /// 개요(Work·피드·관심사 소식). 마지막으로 받은 값을 보여 준다.
+    Overview {
+        /// 지금 다시 받아 온 뒤 보여 준다(끝날 때까지 기다린다).
+        #[arg(long)]
+        refresh: bool,
+        /// 한 출처만 보여 준다.
+        #[arg(long, value_parser = ["work", "geeknews", "hn", "trending", "tyange", "repos", "personal"])]
+        source: Option<String>,
+    },
+    /// 세컨드 브레인 노트를 본다.
+    Brain {
+        #[command(subcommand)]
+        command: BrainCommand,
+    },
+    /// NetFile 검색과 파일 받기. 로그인 값은 tytower가 가지고 있다(여기서 입력하지 않는다).
+    Netfile {
+        #[command(subcommand)]
+        command: NetfileCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BrainCommand {
+    /// 노트 목록(경로순).
+    List,
+    /// 노트 하나(본문·링크·되짚는 노트). id, 제목, 또는 `폴더/제목` 경로로 찾는다.
+    Show { note: String },
+    /// 제목과 본문에서 찾는다(대소문자 무시).
+    Search {
+        query: String,
+        /// 최대 개수(1~200).
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u64).range(1..=200))]
+        limit: u64,
+    },
+    /// 노트 안의 이미지 파일 하나를 저장한다. 파일 id는 `brain show`의 링크에 나온다.
+    File {
+        id: String,
+        /// 저장할 경로. 이미 있는 파일은 덮어쓰지 않는다.
+        #[arg(long, short)]
+        output: PathBuf,
+    },
+    /// 브레인 git 동기화를 시작하고 끝날 때까지 기다린다.
+    Sync,
+}
+
+#[derive(Subcommand)]
+pub enum NetfileCommand {
+    /// 로그인 값이 있는지(값은 보이지 않는다), 다운로드 폴더, 작업 수.
+    Status,
+    /// 파일·폴더 검색. 필터 이름은 `nf search`와 같다.
+    Search {
+        keyword: String,
+        /// 결과 안에서 이 단어가 있는 것만.
+        #[arg(long = "in", conflicts_with = "exclude")]
+        include: Option<String>,
+        /// 결과 안에서 이 단어가 없는 것만.
+        #[arg(long = "not")]
+        exclude: Option<String>,
+        /// 종류: video, image, doc.
+        #[arg(long = "type", value_parser = ["video", "image", "doc"])]
+        kind: Option<String>,
+        /// 기간: 1w, 1m, 6m, 1y.
+        #[arg(long, value_parser = ["1w", "1m", "6m", "1y"])]
+        period: Option<String>,
+        /// 크기: under100m, 100m-1g, 1g-5g, 5g-10g, over10g.
+        #[arg(long, value_parser = ["under100m", "100m-1g", "1g-5g", "5g-10g", "over10g"])]
+        size: Option<String>,
+        /// 범위: all(전체), folder(폴더만), file(파일만).
+        #[arg(long, default_value = "all", value_parser = ["all", "folder", "file"])]
+        scope: String,
+    },
+    /// 폴더 안의 항목 목록(폴더 id는 검색 결과에서 나온다).
+    Ls { folder_id: String },
+    /// 파일을 받기 시작한다(여러 개 가능). 검색이나 목록에서 본 id만 받는다.
+    Download {
+        #[arg(required = true)]
+        entry_ids: Vec<String>,
+    },
+    /// 받기 작업 목록과 진행 상황.
+    Jobs,
+    /// 작업을 취소한다(대기 중이면 바로, 받는 중이면 다음 조각에서 멈춘다). 끝난 작업이면 목록에서만 지운다. 받은 파일은 남는다.
+    Cancel { job_id: String },
+    /// 다 받은 파일을 디스크에서 지운다. 파일 이름과 크기를 먼저 보여 주고, `--yes`가 있어야 지운다.
+    Rm {
+        job_id: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -257,6 +356,38 @@ mod tests {
         assert!(Cli::try_parse_from(["tyange", "auth", "status"]).is_ok());
         assert!(Cli::try_parse_from(["tyange", "auth", "login", "--keep-password"]).is_ok());
         assert!(Cli::try_parse_from(["tyange", "auth", "logout"]).is_ok());
+    }
+
+    #[test]
+    fn every_tower_feature_has_a_command() {
+        for args in [
+            vec!["tyange", "tower", "status"],
+            vec!["tyange", "tower", "overview"],
+            vec!["tyange", "tower", "overview", "--refresh", "--source", "hn"],
+            vec!["tyange", "tower", "overview", "--source", "personal"],
+            vec!["tyange", "tower", "brain", "list"],
+            vec!["tyange", "tower", "brain", "show", "글"],
+            vec!["tyange", "tower", "brain", "search", "rust", "--limit", "5"],
+            vec!["tyange", "tower", "brain", "file", "abc_1", "-o", "pic.png"],
+            vec!["tyange", "tower", "brain", "sync"],
+            vec!["tyange", "tower", "netfile", "status"],
+            vec!["tyange", "tower", "netfile", "search", "회의", "--in", "예산", "--type", "doc", "--scope", "file"],
+            vec!["tyange", "tower", "netfile", "search", "rust", "--not", "draft", "--period", "1y", "--size", "over10g"],
+            vec!["tyange", "tower", "netfile", "ls", "folder-1"],
+            vec!["tyange", "tower", "netfile", "download", "e1", "e2"],
+            vec!["tyange", "tower", "netfile", "jobs"],
+            vec!["tyange", "tower", "netfile", "cancel", "job-1"],
+            vec!["tyange", "tower", "netfile", "rm", "job-1", "--yes"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["tyange", "tower", "overview", "--source", "nope"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "tower", "netfile", "search", "x", "--type", "gif"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "tower", "netfile", "search", "x", "--in", "a", "--not", "b"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "search", "x", "--limit", "0"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "file", "abc"]).is_err(), "-o는 필수");
+        assert!(Cli::try_parse_from(["tyange", "tower", "netfile", "download"]).is_err(), "id가 하나는 있어야 한다");
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "show"]).is_err());
     }
 
     #[test]

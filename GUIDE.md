@@ -249,6 +249,53 @@ lifetime을 피해갈 수 있었다. 여기서는 "원본 파일 내용 하나�
 
 ---
 
+## M5 — tytower 기능을 CLI로 (`tyange tower`)
+
+이 단계는 로드맵 숫자가 없다. tytower(데스크톱 컨트롤 타워)가 가진 기능을 `tyange`에도 같은 모양으로 둔다.
+**같은 일을 두 번 구현하지 않는 것**이 핵심이다. Overview·Brain·NetFile은 tytower의 HTTP API를 부르고,
+CMS만 cms-api를 직접 부른다.
+
+### 1. 대응표부터 (`docs/tower-parity.md`)
+
+tytower의 라우터·화면·서버 라우트를 한 줄씩 적는다. 각 행에 "지금 명령"을 붙이고, 비어 있는 행(`EMPTY`)을 찾는다.
+이 표가 끝나면 할 일이 정해진다. 표를 추측으로 채우지 말고 **`--help`와 실제 응답을 보고** 채운다.
+
+### 2. 설정과 토큰 찾기 (`src/config.rs`, `src/tower.rs`)
+
+- 주소: `TYANGE_TOWER_URL`(기본 `http://127.0.0.1:47820`).
+- 토큰: 환경 변수 → env 파일 → (localhost일 때만) 토큰 파일. 토큰 파일 경로는 OS마다 다르다.
+  `TYTOWER_CONFIG_DIR`가 있으면 그 폴더를 먼저 본다(tytower와 같은 변수).
+- **토큰은 어떤 출력에도 나가지 않는다.** `Debug`도, 에러 문구도.
+
+### 3. HTTP 클라이언트 (`src/tower.rs`)
+
+응답 본문은 `serde_json::Value`로 들고 다닌다. `--json`은 그 값을 그대로 찍고, 사람이 읽는 출력만 타입 구조체로 해석한다.
+그래야 tytower가 필드를 더해도 `--json`은 깨지지 않는다.
+
+- 2xx가 아니면 서버의 `{"error","message"}`를 해석한다. 401은 토큰 문제로 안내한다.
+- 연결 자체가 안 되면 "tytower가 실행 중이 아닙니다"와 헤드리스 실행법을 알려 준다.
+
+### 4. 명령 그룹 (`src/commands/tower.rs`, `brain.rs`, `netfile.rs`)
+
+- 기다려야 하는 것(갱신·동기화)은 `wait_for`로 한다. 이미 돌고 있으면(409) 에러가 아니라 기다리기다.
+- 지우는 것(`netfile rm`)은 **먼저 목록에서 작업을 찾고 상태를 확인한 뒤**, 파일 이름과 크기를 보여 주고 `--yes`를 요구한다.
+  `--yes`가 없으면 DELETE를 보내지 않는다. 테스트가 그걸 확인한다.
+
+### 5. 흉내 낸 서버로 테스트 (`tests/tower_cli.rs`, `tests/support/mod.rs`)
+
+외부 크레이트 없이 std `TcpListener`로 tytower를 흉내 낸다. 테스트는 **실제 `tyange` 바이너리**를 실행해서
+성공 출력, `--json`, `Authorization` 헤더, 토큰이 출력에 없음, tytower가 꺼져 있을 때 안내, `rm --yes` 규칙을 본다.
+마지막으로 실제 tytower를 헤드리스로 띄워서 한 번 돌려 본다(`TYTOWER_HEADLESS=1`, 임시 설정·브레인 폴더, 끝나면 그 PID만 멈춘다).
+
+**자가 점검:**
+- [ ] 대응표에 `EMPTY`가 없다
+- [ ] 토큰을 바꿔 넣어도 출력에 원래 토큰이 나타나지 않는다(테스트로 확인)
+- [ ] `netfile rm`이 `--yes` 없이는 DELETE를 보내지 않는다
+- [ ] 원격 주소에서는 토큰 파일을 읽지 않는다
+- [ ] tytower를 끄면 같은 명령이 "실행 중이 아닙니다"로 끝난다
+
+---
+
 ## 참고
 
 - [Forgejo API 문서](https://git.tyange.com/api/swagger) — 이 리포 자체 인스턴스의 실제 스펙

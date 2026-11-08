@@ -20,6 +20,8 @@ pub enum AppError {
     Io(String),
     /// `ci --watch`가 지켜보던 실행이 실패로 끝났다. 종료 코드를 1로 만들려고 에러로 돌려준다.
     RunFailed(String),
+    /// tytower(로컬 HTTP 서버)에 연결하지 못했다. 값은 `http://호스트:포트`만 담는다(경로·토큰 없음).
+    TowerNotRunning(String),
 }
 
 impl fmt::Display for AppError {
@@ -40,6 +42,10 @@ impl fmt::Display for AppError {
             AppError::Invalid(msg) => write!(f, "{msg}"),
             AppError::Io(msg) => write!(f, "입출력 오류: {msg}"),
             AppError::RunFailed(msg) => write!(f, "{msg}"),
+            AppError::TowerNotRunning(origin) => write!(
+                f,
+                "tytower가 실행 중이 아닙니다({origin}). 데스크톱 앱을 켜거나, 창 없이 띄우려면 TYTOWER_HEADLESS=1 tytower 를 실행하세요"
+            ),
         }
     }
 }

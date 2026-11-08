@@ -21,10 +21,15 @@ tyange cms portfolio get|put|delete|section get|set   # 포트폴리오(PDF 포�
 tyange cms guests               # 하객 명단·시간대별 인원
 tyange cms keys list|create|revoke   # API 키 관리 (ID/비밀번호 로그인 필요)
 tyange cms sync | sync-status  # Craft 폴더 동기화 즉시 실행 / 상태
+tyange tower status                # tytower(데스크톱 컨트롤 타워)가 떠 있고 토큰이 맞는지
+tyange tower overview [--refresh] [--source hn]   # 개요(Work·피드·관심사 소식)
+tyange tower brain list|show|search|file|sync      # 세컨드 브레인 노트
+tyange tower netfile status|search|ls|download|jobs|cancel|rm   # NetFile 검색과 파일 받기 (rm은 --yes 필요)
 ```
 
 모든 명령은 `--json`을 받는다. 설정(`TYANGE_CMS_ID`, `TYANGE_CMS_PASSWORD`, `TYANGE_FORGEJO_TOKEN`)은
-환경변수나 `~/.config/tyange-cli/env`에 둔다. 자세한 건 `CLAUDE.md`.
+환경변수나 `~/.config/tyange-cli/env`에 둔다. tytower는 이 PC에서 켜져 있으면 설정 없이 붙는다(토큰 파일을 읽는다).
+tytower 기능 대응표는 `docs/tower-parity.md`, 자세한 건 `CLAUDE.md`.
 
 ## 로드맵
 
