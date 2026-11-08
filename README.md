@@ -24,7 +24,7 @@ tyange cms sync | sync-status  # Craft 폴더 동기화 즉시 실행 / 상태
 tyange tower status                # tytower(데스크톱 컨트롤 타워)가 떠 있고 토큰이 맞는지
 tyange tower overview [--refresh] [--source hn]   # 개요(Work·피드·관심사 소식)
 tyange tower brain list|show|search|file|sync      # 세컨드 브레인 노트
-tyange tower brain boards list|show|rename|delete  # 보드(화이트보드). 삭제는 --yes 필요, 카드 배치는 화면에서
+tyange tower brain boards create|list|show|rename|delete  # 보드(화이트보드). 삭제는 --yes 필요, 카드 배치는 화면에서
 tyange tower netfile status|search|ls|download|jobs|cancel|rm   # NetFile 검색과 파일 받기 (rm은 --yes 필요)
 ```
 

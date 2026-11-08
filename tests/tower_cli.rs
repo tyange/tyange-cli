@@ -621,6 +621,110 @@ fn rm_never_deletes_a_file_that_is_still_downloading_or_an_unknown_job() {
 // ── 보드(화이트보드) ──────────────────────────────────────────
 
 #[test]
+fn boards_create_sends_an_empty_revision_zero_board_and_prints_revision_one() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "create", "new-board", "  새 보드  "], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("보드를 만들었습니다: new-board \"새 보드\" (revision 1)"), "{}", run.stdout);
+    assert_no_secret(&run);
+
+    // 읽지 않고 바로 저장한다(revision 0이 곧 "없는 보드"라는 확인이다).
+    assert!(mock.requests().iter().all(|r| r.path() != "/api/brain/boards/new-board" || r.method == "PUT"), "no read first");
+    assert_eq!(mock.count("PUT", "/api/brain/boards/new-board"), 1);
+    let seen = mock.requests();
+    let put = seen.iter().find(|r| r.method == "PUT" && r.path() == "/api/brain/boards/new-board").expect("the PUT");
+    assert_eq!(
+        put.json(),
+        json!({
+            "id": "new-board", "name": "새 보드", "revision": 0,
+            "cards": [], "edges": [], "view": {"x": 0, "y": 0, "zoom": 1}
+        })
+    );
+    let made = boards.board("new-board").expect("the board now exists");
+    assert_eq!(made["revision"], 1);
+    assert_eq!(made["name"], "새 보드");
+    assert_authorized(&mock);
+}
+
+#[test]
+fn boards_create_when_the_id_is_taken_refuses_and_writes_nothing() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "create", "plan", "다른 이름"], &env(&mock.url));
+    assert_eq!(run.code, 1, "{}", run.stdout);
+    assert!(run.stderr.contains("이미 있습니다"), "{}", run.stderr);
+    assert!(run.stderr.contains("boards show plan") && run.stderr.contains("boards rename plan"), "{}", run.stderr);
+    assert!(run.stdout.is_empty(), "{}", run.stdout);
+    assert_eq!(mock.count("PUT", "/api/brain/boards/plan"), 1, "the revision 0 save was sent and refused");
+    assert_eq!(boards.board("plan").unwrap(), plan_board(), "the existing board is unchanged");
+    assert_no_secret(&run);
+}
+
+#[test]
+fn boards_create_with_a_bad_id_or_name_is_refused_before_any_request_is_sent() {
+    let mock = full_mock();
+    let long_id = "a".repeat(41);
+    let long_name = "가".repeat(81);
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["tower", "brain", "boards", "create", "", "이름"],
+        vec!["tower", "brain", "boards", "create", "Plan", "이름"],
+        vec!["tower", "brain", "boards", "create", "../plan", "이름"],
+        vec!["tower", "brain", "boards", "create", "a/b", "이름"],
+        vec!["tower", "brain", "boards", "create", "a_b", "이름"],
+        vec!["tower", "brain", "boards", "create", "--", "-lead", "이름"],
+        vec!["tower", "brain", "boards", "create", "한글", "이름"],
+        vec!["tower", "brain", "boards", "create", long_id.as_str(), "이름"],
+        vec!["tower", "brain", "boards", "create", "plan", ""],
+        vec!["tower", "brain", "boards", "create", "plan", "   "],
+        vec!["tower", "brain", "boards", "create", "plan", long_name.as_str()],
+    ];
+    for case in cases {
+        let run = tyange(&case, &env(&mock.url));
+        assert_eq!(run.code, 1, "{case:?}: {}", run.stdout);
+        assert!(run.stderr.contains("보드 id") || run.stderr.contains("1~80자"), "{case:?}: {}", run.stderr);
+    }
+    assert!(mock.requests().is_empty(), "nothing reached the tower: {:?}", mock.requests());
+}
+
+#[test]
+fn boards_create_json_prints_the_saved_answer_and_never_the_token() {
+    let mock = full_mock();
+    let run = tyange(&["--json", "tower", "brain", "boards", "create", "json-board", "제이슨"], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    let value = parse_json(&run);
+    assert_eq!(value, json!({"id": "json-board", "revision": 1, "updated": support::boards::SAVED_AT}));
+    assert_no_secret(&run);
+}
+
+#[test]
+fn boards_create_without_a_token_sends_nothing_and_a_wrong_token_is_refused_without_echo() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let empty = scratch("boards-create-no-token");
+    let empty_str = empty.display().to_string();
+    let missing = tyange(
+        &["tower", "brain", "boards", "create", "new-board", "이름"],
+        &[("TYANGE_TOWER_URL", mock.url.as_str()), ("TYTOWER_CONFIG_DIR", empty_str.as_str())],
+    );
+    assert_eq!(missing.code, 1);
+    assert!(missing.stderr.contains("TYANGE_TOWER_TOKEN"), "{}", missing.stderr);
+    assert!(mock.requests().is_empty(), "no token, so nothing is sent");
+    std::fs::remove_dir_all(empty).unwrap();
+
+    let wrong = "wrong-create-token-XYZ";
+    let refused = tyange(
+        &["tower", "brain", "boards", "create", "new-board", "이름"],
+        &[("TYANGE_TOWER_URL", mock.url.as_str()), ("TYANGE_TOWER_TOKEN", wrong)],
+    );
+    assert_eq!(refused.code, 1);
+    assert!(refused.stderr.contains("토큰이 맞지 않습니다"), "{}", refused.stderr);
+    assert!(!refused.all_output().contains(wrong), "{}", refused.all_output());
+    assert_eq!(mock.count("PUT", "/api/brain/boards/new-board"), 1, "the wrong token was sent and refused");
+    assert!(boards.board("new-board").is_none(), "a refused create makes nothing");
+}
+
+#[test]
 fn boards_list_shows_the_newest_first_with_card_counts() {
     let mock = full_mock();
     let run = tyange(&["tower", "brain", "boards", "list"], &env(&mock.url));
@@ -842,6 +946,7 @@ fn boards_without_a_token_say_so_and_a_wrong_token_is_refused_without_echo() {
 fn boards_say_how_to_start_the_tower_when_it_is_not_running() {
     let url = closed_port_url();
     for args in [
+        vec!["tower", "brain", "boards", "create", "plan", "이름"],
         vec!["tower", "brain", "boards", "list"],
         vec!["tower", "brain", "boards", "show", "plan"],
         vec!["tower", "brain", "boards", "rename", "plan", "이름"],
@@ -879,6 +984,7 @@ fn every_new_command_prints_json_with_the_flag_and_never_the_token() {
         vec!["tower", "netfile", "jobs"],
         vec!["tower", "netfile", "cancel", "job-run"],
         vec!["tower", "netfile", "rm", "job-done", "--yes"],
+        vec!["tower", "brain", "boards", "create", "matrix-new", "matrix 만들기"],
         vec!["tower", "brain", "boards", "list"],
         vec!["tower", "brain", "boards", "show", "plan"],
         vec!["tower", "brain", "boards", "rename", "plan", "matrix 이름"],

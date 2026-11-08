@@ -106,6 +106,13 @@ pub enum BrainCommand {
 
 #[derive(Subcommand)]
 pub enum BoardsCommand {
+    /// 빈 보드를 만든다. 같은 id가 있으면 아무것도 바꾸지 않고 알린다.
+    Create {
+        /// 새 보드 id(영문 소문자·숫자·하이픈, 첫 글자는 소문자나 숫자, 40자 이하).
+        id: String,
+        /// 보드 이름(공백을 뺀 뒤 1~80자).
+        name: String,
+    },
     /// 보드 목록(최근 수정순).
     List,
     /// 보드 하나: 카드, 연결선, 화면 위치. id는 영문 소문자·숫자·하이픈이다.
@@ -400,6 +407,7 @@ mod tests {
             vec!["tyange", "tower", "brain", "search", "rust", "--limit", "5"],
             vec!["tyange", "tower", "brain", "file", "abc_1", "-o", "pic.png"],
             vec!["tyange", "tower", "brain", "sync"],
+            vec!["tyange", "tower", "brain", "boards", "create", "plan", "새 보드"],
             vec!["tyange", "tower", "brain", "boards", "list"],
             vec!["tyange", "tower", "brain", "boards", "show", "plan"],
             vec!["tyange", "tower", "brain", "boards", "rename", "plan", "새 이름"],
@@ -423,6 +431,7 @@ mod tests {
         assert!(Cli::try_parse_from(["tyange", "tower", "netfile", "download"]).is_err(), "id가 하나는 있어야 한다");
         assert!(Cli::try_parse_from(["tyange", "tower", "brain", "show"]).is_err());
         assert!(Cli::try_parse_from(["tyange", "tower", "brain", "boards", "rename", "plan"]).is_err(), "이름은 필수");
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "boards", "create", "plan"]).is_err(), "create도 이름은 필수");
         assert!(Cli::try_parse_from(["tyange", "tower", "brain", "boards"]).is_err(), "하위 명령을 골라야 한다");
     }
 

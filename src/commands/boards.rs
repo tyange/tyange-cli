@@ -70,6 +70,7 @@ pub struct ViewPos {
 
 pub fn run(tower: &Tower, command: BoardsCommand, json: bool) -> Result<(), AppError> {
     match command {
+        BoardsCommand::Create { id, name } => create(tower, &id, &name, json)?,
         BoardsCommand::List => {
             let value = tower.brain_boards()?;
             if json {
@@ -94,6 +95,41 @@ pub fn run(tower: &Tower, command: BoardsCommand, json: bool) -> Result<(), AppE
         BoardsCommand::Delete { id, yes } => delete(tower, &id, yes, json)?,
     }
     Ok(())
+}
+
+/// 빈 보드를 만든다. 새 보드는 revision 0으로 PUT한다. 같은 id가 있으면 서버가 409로 막으므로
+/// GET으로 먼저 확인하지 않는다(경쟁 없이 한 번의 요청으로 정해진다). 이미 있으면 아무것도 쓰지 않는다.
+fn create(tower: &Tower, id: &str, name: &str, json: bool) -> Result<(), AppError> {
+    check_board_id(id)?;
+    let name = check_name(name)?;
+    let saved = tower.brain_board_save(id, &new_board(id, &name)).map_err(|e| create_error(e, id))?;
+    if json {
+        return print_json(&saved);
+    }
+    println!("보드를 만들었습니다: {id} \"{name}\" (revision {})", revision_text(&saved));
+    Ok(())
+}
+
+/// 새 보드의 저장 본문. 계약의 `Board` 필드만 보낸다: revision 0, 카드와 연결선은 비어 있고, 화면은 가운데 원점 1배율.
+pub fn new_board(id: &str, name: &str) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        "revision": 0,
+        "cards": [],
+        "edges": [],
+        "view": {"x": 0, "y": 0, "zoom": 1},
+    })
+}
+
+/// 같은 id가 이미 있으면(409) 안내한다. 서버는 이때 아무것도 쓰지 않는다.
+fn create_error(error: AppError, id: &str) -> AppError {
+    match error {
+        AppError::Api { status: 409, .. } => AppError::Invalid(format!(
+            "보드 id '{id}'는 이미 있습니다. 내용은 tower brain boards show {id}로 보고, 이름은 tower brain boards rename {id} <이름>으로 바꿉니다(아무것도 만들거나 바꾸지 않았습니다)"
+        )),
+        other => other,
+    }
 }
 
 /// 이름을 바꾼다. 먼저 읽어서 revision을 얻고, 그 revision을 실어 저장한다(서버가 맞는지 본다).
@@ -279,6 +315,27 @@ mod tests {
     }
 
     #[test]
+    fn a_new_board_is_sent_as_revision_zero_with_an_empty_canvas() {
+        let body = new_board("plan", "기획");
+        let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["cards", "edges", "id", "name", "revision", "view"]);
+        assert_eq!(body, json!({
+            "id": "plan", "name": "기획", "revision": 0, "cards": [], "edges": [],
+            "view": {"x": 0, "y": 0, "zoom": 1}
+        }));
+    }
+
+    #[test]
+    fn a_taken_id_says_to_use_show_or_rename_and_nothing_else() {
+        let taken = create_error(AppError::Api { status: 409, message: "stale".into() }, "plan").to_string();
+        assert!(taken.contains("이미 있습니다"), "{taken}");
+        assert!(taken.contains("boards show plan") && taken.contains("boards rename plan"), "{taken}");
+        let other = create_error(AppError::Api { status: 500, message: "x".into() }, "plan").to_string();
+        assert!(other.contains("서버 오류(500)"), "{other}");
+    }
+
+    #[test]
     fn the_list_shows_a_count_rows_and_a_line_when_empty() {
         let empty = BoardList::default();
         assert_eq!(list_lines(&empty), vec!["보드 0개".to_string(), "  보드가 없습니다.".to_string()]);
@@ -322,6 +379,10 @@ mod tests {
     fn delete_and_rename_refuse_bad_input_before_any_request() {
         // 주소는 아무도 듣지 않는 곳이다. 요청이 나갔다면 "실행 중이 아닙니다" 같은 다른 오류가 난다.
         let tower = Tower::with_token("http://127.0.0.1:1", Some("token")).unwrap();
+        let bad_create = create(&tower, "Plan", "이름", false).unwrap_err().to_string();
+        assert!(bad_create.contains("보드 id"), "{bad_create}");
+        let bad_create_name = create(&tower, "plan", " ", false).unwrap_err().to_string();
+        assert!(bad_create_name.contains("1~80자"), "{bad_create_name}");
         let no_yes = delete(&tower, "plan", false, false).unwrap_err().to_string();
         assert!(no_yes.contains("--yes"), "{no_yes}");
         let bad_id = delete(&tower, "../plan", true, false).unwrap_err().to_string();
