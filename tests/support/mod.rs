@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod boards;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -133,9 +135,11 @@ fn serve(mut stream: TcpStream, handler: &dyn Fn(&Req) -> Reply, log: &Mutex<Vec
         200 => "OK",
         201 => "Created",
         202 => "Accepted",
+        204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         404 => "Not Found",
+        405 => "Method Not Allowed",
         409 => "Conflict",
         _ => "Status",
     };

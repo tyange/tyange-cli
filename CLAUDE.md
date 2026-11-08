@@ -41,6 +41,7 @@ tyange ci --all [--recent]            # 저장소 폴더 밖에서도: 접근 �
 tyange tower status                   # 연결과 토큰 확인
 tyange tower overview [--refresh] [--source work|geeknews|hn|trending|tyange|repos|personal]
 tyange tower brain list | show <id|제목|폴더/제목> | search <검색어> [--limit n] | file <파일 id> -o <경로> | sync
+tyange tower brain boards list | show <id> | rename <id> <이름> | delete <id> --yes   # 보드. 카드 배치·선·화면 위치는 화면에서만(GUI 전용)
 tyange tower netfile status | search <검색어> [--in 단어|--not 단어] [--type video|image|doc] [--period 1w|1m|6m|1y] [--size ..] [--scope all|folder|file]
 tyange tower netfile ls <폴더 id> | download <항목 id>... | jobs | cancel <작업 id> | rm <작업 id> --yes
 ```
@@ -62,6 +63,8 @@ CMS 명령은 예외로 cms-api를 직접 부른다(위 CMS 절). 구현은 `src
 - tytower가 꺼져 있으면 `tytower가 실행 중이 아닙니다 … TYTOWER_HEADLESS=1 tytower` 안내로 끝난다(exit 1).
 - `overview --refresh`와 `brain sync`는 시작하고 **끝날 때까지 기다린다**(`wait_for`, 제한 시간 180초·300초). 이미 돌고 있으면(409) 기다리기만 한다.
 - `brain show <이름>`은 제목·경로(확장자 없이도)로 찾는다. 여러 개가 맞으면 목록을 보여 주고 id로 고르게 한다.
+- 보드(`brain boards`)는 타워 서버가 저장한다(노트 폴더에 쓰지 않는다). 보드 id는 `[a-z0-9][a-z0-9-]{0,39}`로 **보내기 전에** 검사하고, 경로는 검사를 통과한 값으로만 만든다.
+  이름 바꾸기는 GET으로 읽은 `revision`을 실어 PUT한다. 409(그사이 바뀜)면 저장하지 않고 다시 하라고 알린다. 없는 보드는 PUT으로 만들지 않는다(GET이 404면 중단).
 - `brain file`은 이미 있는 파일을 **덮어쓰지 않는다**.
 - `netfile rm <작업 id>`는 목록에서 작업을 찾고 상태가 `done`인지 확인한 뒤, **파일 이름과 크기를 보여 주고 `--yes`가 있어야** 지운다. 없으면 DELETE를 보내지 않는다. 서버도 다운로드 폴더 안의 일반 파일만 지운다.
 - `netfile` 검색 필터 이름은 `nf search`와 같다(`--in`/`--not`, `--type`, `--period`, `--size`, `--scope`). 검색 본문은 tytower 웹 화면이 보내는 모양과 같다(빠진 필터는 뺀다).
@@ -100,7 +103,7 @@ src/
   commands/cms.rs cms 서브커맨드 분배 + 글 관련(목록·생성·수정·삭제·동기화) + 출력 형식
   commands/{media,portfolio,guests,keys,auth}.rs   태그·이미지 / 포트폴리오 / 하객 / API 키 / 로그인
   commands/tower.rs  tower 분배, status, overview(--refresh, --source), 기다리기(wait_for), 공용 출력 도우미
-  commands/{brain,netfile}.rs  tower brain / tower netfile (노트 고르기, 파일 쓰기, rm 규칙, 검색 본문)
+  commands/{brain,boards,netfile}.rs  tower brain / tower brain boards / tower netfile (노트 고르기, 파일 쓰기, 보드 이름 바꾸기(revision), rm 규칙, 검색 본문)
   shortform.rs    lovelog 200자 규칙 (CMS·lovelog·cms-api와 같은 값, 함께 고친다)
   prompt.rs       한 줄 입력·숨김 입력(stty -echo)
   timeutil.rs     RFC3339 파싱, 한국 시각, 경과 시간

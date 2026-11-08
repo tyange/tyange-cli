@@ -174,6 +174,10 @@ impl Tower {
         parse_reply(self.request(Method::POST, path, &[], body, true)?)
     }
 
+    fn put(&self, path: &str, body: &Value) -> Result<Value, AppError> {
+        parse_reply(self.request(Method::PUT, path, &[], Some(body), true)?)
+    }
+
     fn delete(&self, path: &str) -> Result<Value, AppError> {
         parse_reply(self.request(Method::DELETE, path, &[], None, true)?)
     }
@@ -239,6 +243,24 @@ impl Tower {
             return Err(tower_error(reply.status, &String::from_utf8_lossy(&reply.bytes)));
         }
         Ok((reply.content_type, reply.bytes))
+    }
+
+    /// 보드 목록(`{ "boards": [...] }`, 서버가 updated 내림차순으로 준다).
+    pub fn brain_boards(&self) -> Result<Value, AppError> {
+        self.get("/api/brain/boards")
+    }
+
+    pub fn brain_board(&self, id: &str) -> Result<Value, AppError> {
+        self.get(&format!("/api/brain/boards/{}", check_board_id(id)?))
+    }
+
+    /// 보드를 저장한다. `board`는 계약의 `Board` 모양이고 `revision`은 마지막으로 본 값이어야 한다(아니면 409).
+    pub fn brain_board_save(&self, id: &str, board: &Value) -> Result<Value, AppError> {
+        self.put(&format!("/api/brain/boards/{}", check_board_id(id)?), board)
+    }
+
+    pub fn brain_board_delete(&self, id: &str) -> Result<Value, AppError> {
+        self.delete(&format!("/api/brain/boards/{}", check_board_id(id)?))
     }
 
     pub fn brain_sync_status(&self) -> Result<Value, AppError> {
@@ -391,6 +413,22 @@ pub fn check_id(id: &str) -> Result<&str, AppError> {
     }
 }
 
+/// 보드 id인가. 계약의 규칙과 같다: `[a-z0-9][a-z0-9-]{0,39}`. `/`, `.`, `_`, 대문자, 빈 값은 모두 거부한다.
+/// 보드 경로(`/api/brain/boards/{id}`)는 이 검사를 통과한 값으로만 만든다. 서버에 보내기 전에 막는다.
+pub fn check_board_id(id: &str) -> Result<&str, AppError> {
+    let bytes = id.as_bytes();
+    let ok = (1..=40).contains(&bytes.len())
+        && bytes.iter().enumerate().all(|(i, b)| b.is_ascii_lowercase() || b.is_ascii_digit() || (i > 0 && *b == b'-'));
+    if ok {
+        Ok(id)
+    } else {
+        Err(AppError::Invalid(format!(
+            "보드 id는 영문 소문자·숫자·하이픈(첫 글자는 소문자나 숫자)이고 40자 이하여야 합니다: {}",
+            id.chars().take(40).collect::<String>()
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +519,16 @@ mod tests {
         assert!(check_id("").is_err());
         assert!(check_id("../secret").is_err());
         assert!(check_id(&"a".repeat(201)).is_err());
+    }
+
+    #[test]
+    fn board_ids_follow_the_contract_rule() {
+        for ok in ["plan", "a", "a-b-1", "0x", &"a".repeat(40)] {
+            assert!(check_board_id(ok).is_ok(), "{ok} should be accepted");
+        }
+        for bad in ["", "-a", "A", "a_b", "a/b", "..", "a.b", " a", "a b", "é", "a\n", "../x", &"a".repeat(41)] {
+            assert!(check_board_id(bad).is_err(), "{bad:?} should be rejected");
+        }
     }
 
     #[test]

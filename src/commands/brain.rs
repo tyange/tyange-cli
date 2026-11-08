@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::cli::BrainCommand;
+use crate::commands::boards;
 use crate::commands::tower::{human_bytes, print_json, wait_for, when, POLL, SYNC_WAIT};
 use crate::error::AppError;
 use crate::tower::Tower;
@@ -163,6 +164,7 @@ pub fn run(tower: &Tower, command: BrainCommand, json: bool) -> Result<(), AppEr
                 println!("{line}");
             }
         }
+        BrainCommand::Boards { command } => return boards::run(tower, command, json),
     }
     Ok(())
 }

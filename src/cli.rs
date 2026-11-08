@@ -63,7 +63,7 @@ pub enum TowerCommand {
         #[arg(long, value_parser = ["work", "geeknews", "hn", "trending", "tyange", "repos", "personal"])]
         source: Option<String>,
     },
-    /// 세컨드 브레인 노트를 본다.
+    /// 세컨드 브레인 노트와 보드(화이트보드)를 본다.
     Brain {
         #[command(subcommand)]
         command: BrainCommand,
@@ -97,6 +97,36 @@ pub enum BrainCommand {
     },
     /// 브레인 git 동기화를 시작하고 끝날 때까지 기다린다.
     Sync,
+    /// 보드(화이트보드: 노트 카드를 올려 둔 캔버스)를 본다. 카드 배치는 화면에서만 한다.
+    Boards {
+        #[command(subcommand)]
+        command: BoardsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BoardsCommand {
+    /// 보드 목록(최근 수정순).
+    List,
+    /// 보드 하나: 카드, 연결선, 화면 위치. id는 영문 소문자·숫자·하이픈이다.
+    Show {
+        /// 보드 id(영문 소문자·숫자·하이픈, 첫 글자는 소문자나 숫자, 40자 이하).
+        id: String,
+    },
+    /// 보드 이름을 바꾼다. 마지막으로 본 revision과 맞아야 저장되고, 그사이 바뀌었으면 다시 하라고 알린다.
+    Rename {
+        /// 보드 id(`show`와 같은 규칙).
+        id: String,
+        /// 새 이름(공백을 뺀 뒤 1~80자).
+        name: String,
+    },
+    /// 보드를 지운다. 되돌릴 수 없어서 `--yes`가 있어야 한다.
+    Delete {
+        /// 보드 id(`show`와 같은 규칙).
+        id: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -370,6 +400,10 @@ mod tests {
             vec!["tyange", "tower", "brain", "search", "rust", "--limit", "5"],
             vec!["tyange", "tower", "brain", "file", "abc_1", "-o", "pic.png"],
             vec!["tyange", "tower", "brain", "sync"],
+            vec!["tyange", "tower", "brain", "boards", "list"],
+            vec!["tyange", "tower", "brain", "boards", "show", "plan"],
+            vec!["tyange", "tower", "brain", "boards", "rename", "plan", "새 이름"],
+            vec!["tyange", "tower", "brain", "boards", "delete", "plan", "--yes"],
             vec!["tyange", "tower", "netfile", "status"],
             vec!["tyange", "tower", "netfile", "search", "회의", "--in", "예산", "--type", "doc", "--scope", "file"],
             vec!["tyange", "tower", "netfile", "search", "rust", "--not", "draft", "--period", "1y", "--size", "over10g"],
@@ -388,6 +422,8 @@ mod tests {
         assert!(Cli::try_parse_from(["tyange", "tower", "brain", "file", "abc"]).is_err(), "-o는 필수");
         assert!(Cli::try_parse_from(["tyange", "tower", "netfile", "download"]).is_err(), "id가 하나는 있어야 한다");
         assert!(Cli::try_parse_from(["tyange", "tower", "brain", "show"]).is_err());
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "boards", "rename", "plan"]).is_err(), "이름은 필수");
+        assert!(Cli::try_parse_from(["tyange", "tower", "brain", "boards"]).is_err(), "하위 명령을 골라야 한다");
     }
 
     #[test]

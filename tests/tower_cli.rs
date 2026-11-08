@@ -1,12 +1,15 @@
-//! `tyange tower …` 통합 테스트. 흉내 낸 tytower(mock.rs)에 실제 바이너리를 붙여서 확인한다.
+//! `tyange tower …` 통합 테스트. 흉내 낸 tytower(tests/support)에 실제 바이너리를 붙여서 확인한다.
 //! 확인하는 것: 성공 출력, `--json` 출력, `Authorization: Bearer` 헤더, 토큰이 출력에 없음,
-//! tytower가 꺼져 있을 때의 안내, `rm`이 `--yes` 없이는 지우지 않음.
+//! tytower가 꺼져 있을 때의 안내, `rm`과 보드 `delete`가 `--yes` 없이는 지우지 않음,
+//! 보드 id가 규칙에 안 맞으면 요청이 나가기 전에 거부함, 보드 이름 바꾸기의 revision 검사.
 
 mod support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
+use support::boards::Boards;
 use support::{closed_port_url, scratch, tyange, Mock, Reply, Req, Run};
 
 const TOKEN: &str = "tower-test-token-SECRET-0123456789abcdef";
@@ -135,13 +138,34 @@ fn job_new() -> Value {
            "bytes_done": 0, "total": null, "bytes_per_sec": 0.0, "message": null, "created_ms": 3})
 }
 
+fn plan_board() -> Value {
+    json!({
+        "id": "plan", "name": "기획 보드", "revision": 3,
+        "cards": [{"noteId": NOTE_A, "x": 40, "y": 60, "w": 240}, {"noteId": NOTE_B, "x": 400, "y": 60, "w": 200}],
+        "edges": [{"from": NOTE_A, "to": NOTE_B, "kind": "manual"}],
+        "view": {"x": 10, "y": 20, "zoom": 1.5}
+    })
+}
+
+fn archive_board() -> Value {
+    json!({"id": "archive", "name": "보관함", "revision": 1, "cards": [], "edges": [], "view": {"x": 0, "y": 0, "zoom": 1}})
+}
+
+/// 보드 두 개가 있는 흉내 낸 서버. `plan`이 더 최근에 고쳐졌다.
+fn sample_boards() -> Arc<Boards> {
+    Boards::with(vec![(plan_board(), "2026-11-08T03:00:00Z"), (archive_board(), "2026-11-07T01:00:00Z")])
+}
+
 /// 모든 경로를 흉내 낸다. `/api/health`만 토큰 없이 되고, 나머지는 토큰이 맞아야 한다(tytower와 같다).
-fn full_route(req: &Req) -> Reply {
+fn full_route(req: &Req, boards: &Boards) -> Reply {
     if req.path() == "/api/health" {
         return Reply::json(200, json!({"status": "ok"}));
     }
     if req.auth.as_deref() != Some(AUTH) {
         return Reply::json(401, json!({"error": "unauthorized"}));
+    }
+    if let Some(reply) = boards.route(req) {
+        return reply;
     }
     let path = req.path();
     match (req.method.as_str(), path) {
@@ -168,7 +192,11 @@ fn full_route(req: &Req) -> Reply {
 }
 
 fn full_mock() -> Mock {
-    Mock::start(full_route)
+    full_mock_with(sample_boards())
+}
+
+fn full_mock_with(boards: Arc<Boards>) -> Mock {
+    Mock::start(move |req| full_route(req, &boards))
 }
 
 /// 토큰과 주소를 환경 변수로 넘긴다(이 PC의 설정은 테스트 실행기가 가린다).
@@ -590,6 +618,242 @@ fn rm_never_deletes_a_file_that_is_still_downloading_or_an_unknown_job() {
     assert!(mock.requests().iter().all(|r| r.method != "DELETE"));
 }
 
+// ── 보드(화이트보드) ──────────────────────────────────────────
+
+#[test]
+fn boards_list_shows_the_newest_first_with_card_counts() {
+    let mock = full_mock();
+    let run = tyange(&["tower", "brain", "boards", "list"], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("보드 2개"), "{}", run.stdout);
+    assert!(run.stdout.contains("기획 보드"), "{}", run.stdout);
+    let plan_at = run.stdout.find("plan").expect("plan is listed");
+    let archive_at = run.stdout.find("archive").expect("archive is listed");
+    assert!(plan_at < archive_at, "the newest board comes first:\n{}", run.stdout);
+    assert_eq!(mock.count("GET", "/api/brain/boards"), 1);
+    assert_authorized(&mock);
+
+    let json = tyange(&["--json", "tower", "brain", "boards", "list"], &env(&mock.url));
+    assert!(json.ok(), "{}", json.stderr);
+    let value = parse_json(&json);
+    assert_eq!(value["boards"][0]["id"], "plan");
+    assert_eq!(value["boards"][0]["cards"], 2);
+    assert_eq!(value["boards"][1]["id"], "archive");
+    assert_no_secret(&json);
+}
+
+#[test]
+fn boards_list_on_an_empty_tower_says_there_are_none() {
+    let mock = full_mock_with(Boards::empty());
+    let run = tyange(&["tower", "brain", "boards", "list"], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("보드 0개") && run.stdout.contains("보드가 없습니다."), "{}", run.stdout);
+    let json = tyange(&["--json", "tower", "brain", "boards", "list"], &env(&mock.url));
+    assert_eq!(parse_json(&json), json!({"boards": []}));
+}
+
+#[test]
+fn boards_show_prints_cards_edges_and_view_and_json_is_the_answer() {
+    let mock = full_mock();
+    let run = tyange(&["tower", "brain", "boards", "show", "plan"], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("# 기획 보드"), "{}", run.stdout);
+    assert!(run.stdout.contains("id: plan · revision 3"), "{}", run.stdout);
+    assert!(run.stdout.contains("카드 2개 · 연결선 1개 · 화면 x 10 y 20 확대 1.5"), "{}", run.stdout);
+    assert!(run.stdout.contains(&format!("  {NOTE_A}  위치 (40, 60)  폭 240")), "{}", run.stdout);
+    assert!(run.stdout.contains(&format!("  {NOTE_A} → {NOTE_B}")), "{}", run.stdout);
+    assert_eq!(mock.count("GET", "/api/brain/boards/plan"), 1);
+    assert_authorized(&mock);
+
+    let json = tyange(&["--json", "tower", "brain", "boards", "show", "plan"], &env(&mock.url));
+    assert!(json.ok(), "{}", json.stderr);
+    assert_eq!(parse_json(&json), plan_board());
+    assert_no_secret(&json);
+}
+
+#[test]
+fn boards_show_of_a_missing_board_is_a_clear_error() {
+    let mock = full_mock();
+    let run = tyange(&["tower", "brain", "boards", "show", "nope"], &env(&mock.url));
+    assert_eq!(run.code, 1);
+    assert!(run.stderr.contains("보드를 찾지 못했습니다: nope"), "{}", run.stderr);
+    assert!(run.stdout.is_empty(), "{}", run.stdout);
+}
+
+#[test]
+fn boards_rename_reads_the_revision_then_saves_only_the_new_name() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "rename", "plan", "  새 이름  "], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("\"기획 보드\" → \"새 이름\" (revision 4)"), "{}", run.stdout);
+    assert_no_secret(&run);
+
+    // 먼저 읽고(GET), 읽은 revision을 그대로 실어 저장한다(PUT). 본문에는 계약의 Board 필드만 있다.
+    let seen = mock.requests();
+    let get = seen.iter().position(|r| r.method == "GET" && r.path() == "/api/brain/boards/plan").expect("read first");
+    let put = seen.iter().position(|r| r.method == "PUT" && r.path() == "/api/brain/boards/plan").expect("then saved");
+    assert!(get < put, "the read comes before the save");
+    assert_eq!(mock.count("PUT", "/api/brain/boards/plan"), 1);
+    assert_eq!(
+        seen[put].json(),
+        json!({
+            "id": "plan", "name": "새 이름", "revision": 3,
+            "cards": plan_board()["cards"], "edges": plan_board()["edges"], "view": plan_board()["view"]
+        })
+    );
+    assert_eq!(boards.board("plan").unwrap()["name"], "새 이름");
+    assert_eq!(boards.board("plan").unwrap()["revision"], 4);
+    assert_authorized(&mock);
+
+    let json = tyange(&["--json", "tower", "brain", "boards", "rename", "plan", "또 다른 이름"], &env(&mock.url));
+    assert!(json.ok(), "{}", json.stderr);
+    let value = parse_json(&json);
+    assert_eq!(value["id"], "plan");
+    assert_eq!(value["revision"], 5);
+    assert_no_secret(&json);
+}
+
+#[test]
+fn boards_rename_on_a_stale_revision_refuses_and_says_to_try_again() {
+    let boards = sample_boards();
+    // 읽은 뒤 저장하기 전에 다른 기기가 고친 상황: 다음 GET 뒤에 revision이 올라간다.
+    boards.bump_revision_after_next_get();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "rename", "plan", "바뀔 이름"], &env(&mock.url));
+    assert_eq!(run.code, 1, "{}", run.stdout);
+    assert!(run.stderr.contains("다시 시도하세요"), "{}", run.stderr);
+    assert!(run.stderr.contains("tower brain boards rename plan"), "{}", run.stderr);
+    assert_eq!(mock.count("PUT", "/api/brain/boards/plan"), 1, "the save was sent and refused");
+    let kept = boards.board("plan").unwrap();
+    assert_eq!(kept["name"], "기획 보드", "the other device's board is not overwritten");
+    assert_eq!(kept["revision"], 4, "the revision moved on and nothing was written");
+    assert!(run.stdout.is_empty(), "{}", run.stdout);
+    assert_no_secret(&run);
+}
+
+#[test]
+fn boards_rename_of_a_missing_board_never_creates_it() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "rename", "nope", "이름"], &env(&mock.url));
+    assert_eq!(run.code, 1);
+    assert!(run.stderr.contains("보드를 찾지 못했습니다: nope"), "{}", run.stderr);
+    assert_eq!(mock.count("PUT", "/api/brain/boards/nope"), 0, "a PUT would create the board, so it is never sent");
+    assert!(boards.board("nope").is_none());
+}
+
+#[test]
+fn boards_delete_without_yes_sends_nothing() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "delete", "plan"], &env(&mock.url));
+    assert_eq!(run.code, 1);
+    assert!(run.stderr.contains("--yes"), "{}", run.stderr);
+    assert!(mock.requests().is_empty(), "not even a read without --yes");
+    assert!(boards.board("plan").is_some());
+}
+
+#[test]
+fn boards_delete_with_yes_removes_only_the_named_board() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let run = tyange(&["tower", "brain", "boards", "delete", "plan", "--yes"], &env(&mock.url));
+    assert!(run.ok(), "{}", run.stderr);
+    assert!(run.stdout.contains("보드를 지웠습니다: plan"), "{}", run.stdout);
+    assert_eq!(mock.count("DELETE", "/api/brain/boards/plan"), 1);
+    assert!(boards.board("plan").is_none());
+    assert!(boards.board("archive").is_some(), "the other board stays");
+    assert_authorized(&mock);
+
+    let json = tyange(&["--json", "tower", "brain", "boards", "delete", "archive", "--yes"], &env(&mock.url));
+    assert!(json.ok(), "{}", json.stderr);
+    assert_eq!(parse_json(&json), json!({"id": "archive", "deleted": true}));
+}
+
+#[test]
+fn boards_delete_of_a_missing_board_is_a_clear_error_with_a_nonzero_exit() {
+    let mock = full_mock();
+    let run = tyange(&["tower", "brain", "boards", "delete", "nope", "--yes"], &env(&mock.url));
+    assert_eq!(run.code, 1);
+    assert!(run.stderr.contains("보드를 찾지 못했습니다: nope"), "{}", run.stderr);
+    assert_eq!(mock.count("DELETE", "/api/brain/boards/nope"), 1);
+    assert!(run.stdout.is_empty(), "{}", run.stdout);
+}
+
+#[test]
+fn a_bad_board_id_or_name_is_refused_before_any_request_is_sent() {
+    let mock = full_mock();
+    let long_id = "a".repeat(41);
+    let long_name = "가".repeat(81);
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["tower", "brain", "boards", "show", ""],
+        vec!["tower", "brain", "boards", "show", "Plan"],
+        vec!["tower", "brain", "boards", "show", "../plan"],
+        vec!["tower", "brain", "boards", "show", "a/b"],
+        vec!["tower", "brain", "boards", "show", "a_b"],
+        // 맨 앞의 `-`는 clap이 옵션으로 읽으므로 `--` 뒤에 둔다(그래야 id 검사가 막는다).
+        vec!["tower", "brain", "boards", "show", "--", "-lead"],
+        vec!["tower", "brain", "boards", "show", "한글"],
+        vec!["tower", "brain", "boards", "show", long_id.as_str()],
+        vec!["tower", "brain", "boards", "rename", "plan/x", "이름"],
+        vec!["tower", "brain", "boards", "rename", "plan", ""],
+        vec!["tower", "brain", "boards", "rename", "plan", "   "],
+        vec!["tower", "brain", "boards", "rename", "plan", long_name.as_str()],
+        vec!["tower", "brain", "boards", "delete", "../plan", "--yes"],
+        vec!["tower", "brain", "boards", "delete", "Plan", "--yes"],
+    ];
+    for case in cases {
+        let run = tyange(&case, &env(&mock.url));
+        assert_eq!(run.code, 1, "{case:?}: {}", run.stdout);
+        assert!(run.stderr.contains("보드 id") || run.stderr.contains("1~80자"), "{case:?}: {}", run.stderr);
+    }
+    assert!(mock.requests().is_empty(), "nothing reached the tower: {:?}", mock.requests());
+}
+
+#[test]
+fn boards_without_a_token_say_so_and_a_wrong_token_is_refused_without_echo() {
+    let boards = sample_boards();
+    let mock = full_mock_with(boards.clone());
+    let empty = scratch("boards-no-token");
+    let empty_str = empty.display().to_string();
+    let missing = tyange(
+        &["tower", "brain", "boards", "list"],
+        &[("TYANGE_TOWER_URL", mock.url.as_str()), ("TYTOWER_CONFIG_DIR", empty_str.as_str())],
+    );
+    assert_eq!(missing.code, 1);
+    assert!(missing.stderr.contains("TYANGE_TOWER_TOKEN"), "{}", missing.stderr);
+    assert!(mock.requests().is_empty(), "no token, so nothing is sent");
+    std::fs::remove_dir_all(empty).unwrap();
+
+    let wrong = "wrong-board-token-XYZ";
+    let refused = tyange(
+        &["tower", "brain", "boards", "delete", "plan", "--yes"],
+        &[("TYANGE_TOWER_URL", mock.url.as_str()), ("TYANGE_TOWER_TOKEN", wrong)],
+    );
+    assert_eq!(refused.code, 1);
+    assert!(refused.stderr.contains("토큰이 맞지 않습니다"), "{}", refused.stderr);
+    assert!(!refused.all_output().contains(wrong), "{}", refused.all_output());
+    assert_eq!(mock.count("DELETE", "/api/brain/boards/plan"), 1, "the wrong token was sent and refused");
+    assert!(boards.board("plan").is_some(), "a refused delete removes nothing");
+}
+
+#[test]
+fn boards_say_how_to_start_the_tower_when_it_is_not_running() {
+    let url = closed_port_url();
+    for args in [
+        vec!["tower", "brain", "boards", "list"],
+        vec!["tower", "brain", "boards", "show", "plan"],
+        vec!["tower", "brain", "boards", "rename", "plan", "이름"],
+        vec!["tower", "brain", "boards", "delete", "plan", "--yes"],
+    ] {
+        let run = tyange(&args, &[("TYANGE_TOWER_URL", url.as_str()), ("TYANGE_TOWER_TOKEN", TOKEN)]);
+        assert_eq!(run.code, 1, "{args:?}");
+        assert!(run.stderr.contains("실행 중이 아닙니다") && run.stderr.contains("TYTOWER_HEADLESS=1"), "{args:?}: {}", run.stderr);
+        assert_no_secret(&run);
+    }
+}
+
 // ── 모든 새 명령: --json과 토큰 비노출 ───────────────────────────
 
 #[test]
@@ -615,6 +879,10 @@ fn every_new_command_prints_json_with_the_flag_and_never_the_token() {
         vec!["tower", "netfile", "jobs"],
         vec!["tower", "netfile", "cancel", "job-run"],
         vec!["tower", "netfile", "rm", "job-done", "--yes"],
+        vec!["tower", "brain", "boards", "list"],
+        vec!["tower", "brain", "boards", "show", "plan"],
+        vec!["tower", "brain", "boards", "rename", "plan", "matrix 이름"],
+        vec!["tower", "brain", "boards", "delete", "archive", "--yes"],
     ];
     for case in cases {
         let mut args = vec!["--json"];

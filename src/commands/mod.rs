@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod boards;
 pub mod brain;
 pub mod ci;
 pub mod cms;
